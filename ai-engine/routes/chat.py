@@ -8,7 +8,8 @@ from services.filter_merger import merge_filters
 from database.postgres import get_filtered_products
 from database.chat_session import (
     get_session,
-    save_session
+    save_session,
+    delete_session
 )
 
 from services.clip_service import generate_text_embedding
@@ -36,6 +37,10 @@ def shopping_chat(request: ChatRequest):
 
     result = parse_user_query(request.message)
 
+    print("\n========== PARSER RESULT ==========")
+    print(result)
+    print("===================================\n")
+
     # ------------------------------------
     # Greeting
     # ------------------------------------
@@ -44,29 +49,45 @@ def shopping_chat(request: ChatRequest):
 
         return {
             "intent": "greeting",
-            "message":
-                "👋 Hello! I'm your AI Shopping Assistant. "
+            "message": (
+                "👋 Hello! I'm your AI Shopping Assistant.\n"
                 "Tell me what product you're looking for."
+            )
         }
 
     # ------------------------------------
-    # Out of Context
+    # Reset Conversation
+    # ------------------------------------
+
+    if result["intent"] == "reset":
+
+        delete_session(request.sessionId)
+
+        return {
+            "intent": "reset",
+            "message": "Your shopping session has been reset successfully."
+        }
+
+    # ------------------------------------
+    # Out Of Context
     # ------------------------------------
 
     if result["intent"] == "out_of_context":
 
         return {
             "intent": "out_of_context",
-            "message":
-                "Sorry, I can only help with shopping and product recommendations."
+            "message": (
+                "Sorry, I can only help with shopping and "
+                "product recommendations."
+            )
         }
 
     # ------------------------------------
-    # Step 2 : Normalize Current Filters
+    # Step 2 : Normalize Filters
     # ------------------------------------
 
     current_filters = normalize_filters(
-        result["filters"]
+        result.get("filters", {})
     )
 
     print("\nCurrent Filters")
@@ -87,13 +108,25 @@ def shopping_chat(request: ChatRequest):
     print(previous_filters)
 
     # ------------------------------------
-    # Step 4 : Merge Filters
+    # Step 4 : Action Handling
     # ------------------------------------
 
-    merged_filters = merge_filters(
-        previous_filters,
-        current_filters
-    )
+    action = result.get("action", "new_search")
+
+    if action == "modify":
+
+        merged_filters = merge_filters(
+            previous_filters,
+            current_filters
+        )
+
+    else:
+
+        # new_search
+        merged_filters = current_filters
+
+    print("\nAction")
+    print(action)
 
     print("\nMerged Filters")
     print(merged_filters)
@@ -122,7 +155,9 @@ def shopping_chat(request: ChatRequest):
 
         return {
             "intent": "shopping",
+            "action": action,
             "filters": merged_filters,
+            "totalFilteredProducts": 0,
             "recommendedProducts": [],
             "message": "No products matched your search."
         }
@@ -166,6 +201,8 @@ def shopping_chat(request: ChatRequest):
     return {
 
         "intent": "shopping",
+
+        "action": action,
 
         "filters": merged_filters,
 

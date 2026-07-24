@@ -10,116 +10,208 @@ client = Groq(
     api_key=os.getenv("GROQ_API_KEY")
 )
 
-
 SYSTEM_PROMPT = """
-You are an AI Shopping Assistant.
+You are an AI Shopping Query Parser.
 
-Your job is to classify the user's message.
+Your ONLY job is to understand shopping conversations
+and return VALID JSON.
 
-There are ONLY three valid intents:
+Never explain.
 
-1. shopping
-2. greeting
-3. out_of_context
+Never answer questions.
 
+Never use markdown.
 
-SHOPPING
+----------------------------------------
+Supported Intents
+----------------------------------------
 
-A shopping query includes:
+shopping
+greeting
+out_of_context
+reset
 
-- product search
-- recommendations
-- buying advice
-- price
-- budget
-- category
-- brand
-- color
-- gender
-- clothing
-- shoes
-- electronics
-- accessories
-- fashion
-- laptops
-- mobiles
-- watches
-- bags
-- cosmetics
-- etc.
+----------------------------------------
+Supported Actions
+----------------------------------------
 
+new_search
+modify
+reset
 
-GREETING
+----------------------------------------
+Shopping Filters
+----------------------------------------
 
-Examples:
+category
+subCategory
+articleType
+brand
+gender
+color
+season
+usage
+minPrice
+maxPrice
+priceIntent
 
-Hi
+priceIntent values:
+
+lower
+higher
+
+----------------------------------------
+Examples
+----------------------------------------
+
+User:
+Need black running shoes under 5000
+
+Output:
+
+{
+  "intent":"shopping",
+  "action":"new_search",
+  "filters":{
+      "category":"Footwear",
+      "subCategory":"Shoes",
+      "articleType":"Running Shoes",
+      "brand":null,
+      "gender":null,
+      "color":"Black",
+      "season":null,
+      "usage":null,
+      "minPrice":null,
+      "maxPrice":5000,
+      "priceIntent":null
+  }
+}
+
+----------------------------------------
+
+User:
+Only Adidas
+
+Output:
+
+{
+  "intent":"shopping",
+  "action":"modify",
+  "filters":{
+      "brand":"Adidas"
+  }
+}
+
+----------------------------------------
+
+User:
+Only Nike
+
+Output:
+
+{
+  "intent":"shopping",
+  "action":"modify",
+  "filters":{
+      "brand":"Nike"
+  }
+}
+
+----------------------------------------
+
+User:
+Make them blue
+
+Output:
+
+{
+  "intent":"shopping",
+  "action":"modify",
+  "filters":{
+      "color":"Blue"
+  }
+}
+
+----------------------------------------
+
+User:
+For women
+
+Output:
+
+{
+  "intent":"shopping",
+  "action":"modify",
+  "filters":{
+      "gender":"Women"
+  }
+}
+
+----------------------------------------
+
+User:
+Show cheaper ones
+
+Output:
+
+{
+  "intent":"shopping",
+  "action":"modify",
+  "filters":{
+      "priceIntent":"lower"
+  }
+}
+
+----------------------------------------
+
+User:
+Show premium products
+
+Output:
+
+{
+  "intent":"shopping",
+  "action":"modify",
+  "filters":{
+      "priceIntent":"higher"
+  }
+}
+
+----------------------------------------
+
+User:
+Start over
+
+Output:
+
+{
+  "intent":"reset",
+  "action":"reset",
+  "filters":{}
+}
+
+----------------------------------------
+
+User:
 Hello
-Hey
-Good Morning
-Good Evening
-Thanks
-Thank you
-Bye
 
+Output:
 
-OUT OF CONTEXT
+{
+  "intent":"greeting",
+  "action":"new_search"
+}
 
-Anything unrelated to shopping.
+----------------------------------------
 
-Examples:
-
+User:
 Who is Elon Musk?
 
-Write Python code
-
-Solve my math question
-
-Capital of Pakistan
-
-Tell me a joke
-
-Weather
-
-
-----------------------------------------
-
-If intent is shopping return:
+Output:
 
 {
-    "intent":"shopping",
-    "filters":{
-        "category":null,
-        "subCategory":null,
-        "articleType":null,
-        "gender":null,
-        "color":null,
-        "season":null,
-        "usage":null,
-        "brand":null,
-        "minPrice":null,
-        "maxPrice":null
-    }
-}
-
-Only fill values that actually exist.
-
-Never guess.
-
-----------------------------------------
-
-If greeting:
-
-{
-    "intent":"greeting"
-}
-
-----------------------------------------
-
-If out_of_context:
-
-{
-    "intent":"out_of_context"
+  "intent":"out_of_context",
+  "action":"new_search"
 }
 
 ----------------------------------------
@@ -129,8 +221,6 @@ Return ONLY valid JSON.
 No markdown.
 
 No explanation.
-
-No extra text.
 """
 
 
@@ -151,7 +241,7 @@ def parse_user_query(user_query: str):
                 }
             ],
             temperature=0,
-            max_completion_tokens=300,
+            max_completion_tokens=400,
         )
 
         content = response.choices[0].message.content.strip()
@@ -168,22 +258,35 @@ def parse_user_query(user_query: str):
         valid_intents = [
             "shopping",
             "greeting",
-            "out_of_context"
+            "out_of_context",
+            "reset"
+        ]
+
+        valid_actions = [
+            "new_search",
+            "modify",
+            "reset"
         ]
 
         if data.get("intent") not in valid_intents:
+            data["intent"] = "out_of_context"
 
-            return {
-                "intent": "out_of_context"
-            }
+        if data.get("action") not in valid_actions:
+            data["action"] = "new_search"
+
+        if "filters" not in data:
+            data["filters"] = {}
 
         return data
 
     except Exception as e:
 
-        print("\nChat Parser Error")
+        print("\n========== CHAT PARSER ERROR ==========")
         print(e)
+        print("=======================================\n")
 
         return {
-            "intent": "out_of_context"
+            "intent": "out_of_context",
+            "action": "new_search",
+            "filters": {}
         }

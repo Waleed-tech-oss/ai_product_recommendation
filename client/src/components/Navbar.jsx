@@ -1,3 +1,4 @@
+import { NavLink } from "react-router-dom";
 import "./Navbar.css";
 
 function Navbar() {
@@ -8,8 +9,31 @@ function Navbar() {
       </div>
 
       <ul className="nav-links">
-        <li>Home</li>
-        <li>About</li>
+        <li>
+          <NavLink
+            to="/"
+            className={({ isActive }) =>
+              isActive ? "active-link" : ""
+            }
+          >
+            Home
+          </NavLink>
+        </li>
+
+        <li>
+          <NavLink
+            to="/shopping-assistant"
+            className={({ isActive }) =>
+              isActive ? "active-link" : ""
+            }
+          >
+            AI Shopping
+          </NavLink>
+        </li>
+
+        <li>
+          <a href="#about">About</a>
+        </li>
       </ul>
     </nav>
   );

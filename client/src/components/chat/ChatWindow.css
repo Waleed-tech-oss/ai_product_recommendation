@@ -1,0 +1,29 @@
+.chat-window{
+    flex:1;
+    overflow-y:auto;
+    background:#0f172a;
+    padding:30px;
+}
+
+.chat-container{
+    max-width:900px;
+    margin:0 auto;
+    display:flex;
+    flex-direction:column;
+    gap:18px;
+}
+
+/* Scrollbar */
+
+.chat-window::-webkit-scrollbar{
+    width:8px;
+}
+
+.chat-window::-webkit-scrollbar-thumb{
+    background:#334155;
+    border-radius:10px;
+}
+
+.chat-window::-webkit-scrollbar-track{
+    background:transparent;
+}

@@ -80,3 +80,26 @@
         gap: 20px;
     }
 }
+
+
+.nav-links {
+  display: flex;
+  gap: 25px;
+  list-style: none;
+}
+
+.nav-links a {
+  color: white;
+  text-decoration: none;
+  font-weight: 500;
+  transition: 0.3s;
+}
+
+.nav-links a:hover {
+  color: #38bdf8;
+}
+
+.active-link {
+  color: #38bdf8 !important;
+  font-weight: 700;
+}
