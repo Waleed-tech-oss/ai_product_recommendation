@@ -1,0 +1,31 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Product {
+  id           String   @id @default(cuid())
+  name         String
+  description  String?
+  category     String?
+  subCategory  String?
+  articleType  String?
+  gender       String?
+  color        String?
+  season       String?
+  usage        String?
+  image        String?
+  price        Float    @default(0)
+
+  // AI embedding (temporarily JSON, later pgvector)
+  embedding    Json?
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("products")
+}

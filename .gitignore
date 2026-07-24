@@ -1,0 +1,14 @@
+# Dependencies & Environment
+node_modules/
+.env
+*.env
+
+# Python Cache
+__pycache__/
+*.pyc
+
+# Dataset & Heavy Media Files (Inhe Push Nahi Karna)
+server/dataset/
+server/uploads/
+*.zip
+*.csv

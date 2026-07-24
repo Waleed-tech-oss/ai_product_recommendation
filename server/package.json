@@ -5,14 +5,24 @@
   "main": "server.js",
   "scripts": {
     "dev": "nodemon server.js",
-    "start": "node server.js"
+    "start": "node server.js",
+    "seed": "node scripts/seedProducts.js"
   },
   "dependencies": {
+    "@huggingface/transformers": "^4.2.0",
+    "@prisma/client": "^6.19.3",
+    "axios": "^1.18.1",
     "cors": "^2.8.6",
+    "csv-parser": "^3.2.1",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "form-data": "^4.0.6",
+    "fs-extra": "^11.3.6",
     "mongoose": "^9.7.4",
-    "multer": "^2.2.0"
+    "multer": "^2.2.0",
+    "pg": "^8.22.0",
+    "prisma": "^6.19.3",
+    "sharp": "^0.35.3"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"

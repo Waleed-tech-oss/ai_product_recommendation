@@ -18,6 +18,36 @@ const productSchema = new mongoose.Schema(
       default: "",
     },
 
+    subCategory: {
+      type: String,
+      default: "",
+    },
+
+    articleType: {
+      type: String,
+      default: "",
+    },
+
+    gender: {
+      type: String,
+      default: "",
+    },
+
+    color: {
+      type: String,
+      default: "",
+    },
+
+    season: {
+      type: String,
+      default: "",
+    },
+
+    usage: {
+      type: String,
+      default: "",
+    },
+
     image: {
       type: String,
       default: "",
@@ -26,6 +56,7 @@ const productSchema = new mongoose.Schema(
     price: {
       type: Number,
       required: true,
+      default: 0,
     },
 
     embedding: {

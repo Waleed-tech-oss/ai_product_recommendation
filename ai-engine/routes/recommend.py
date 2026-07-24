@@ -10,22 +10,23 @@ from services.clip_service import (
     generate_text_embedding,
 )
 from services.recommendation_service import find_similar_products
+from services.groq_service import generate_explanations
 
 load_dotenv()
 
 router = APIRouter()
 
 
-# -----------------------------
-# Request Model for Text Search
-# -----------------------------
+# --------------------------------
+# Request Model
+# --------------------------------
 class TextSearchRequest(BaseModel):
     query: str
 
 
-# -----------------------------
+# --------------------------------
 # Image Recommendation
-# -----------------------------
+# --------------------------------
 @router.post("/recommend")
 async def recommend(file: UploadFile = File(...)):
     os.makedirs("uploads", exist_ok=True)
@@ -48,6 +49,16 @@ async def recommend(file: UploadFile = File(...)):
             products
         )
 
+        # Generate AI Explanations (Single Groq Call)
+        explanations = generate_explanations(
+            "Uploaded Image",
+            recommendations
+        )
+
+        # Attach explanation to each product
+        for product, explanation in zip(recommendations, explanations):
+            product["explanation"] = explanation
+
         return recommendations
 
     except Exception as e:
@@ -61,23 +72,35 @@ async def recommend(file: UploadFile = File(...)):
             os.remove(temp_path)
 
 
-# -----------------------------
+# --------------------------------
 # Text Recommendation
-# -----------------------------
+# --------------------------------
 @router.post("/search/text")
 async def text_search(request: TextSearchRequest):
     try:
+
         # Generate Text Embedding
         embedding = generate_text_embedding(request.query)
 
         # Fetch Products
         products = get_all_products()
+        print(products[0])
 
         # Find Similar Products
         recommendations = find_similar_products(
             embedding,
             products
         )
+
+        # Generate AI Explanations (Single Groq Call)
+        explanations = generate_explanations(
+            request.query,
+            recommendations
+        )
+
+        # Attach explanation to each product
+        for product, explanation in zip(recommendations, explanations):
+            product["explanation"] = explanation
 
         return recommendations
 
