@@ -87,6 +87,117 @@ def get_all_products():
 
 
 # ----------------------------------------
+# Get Product By ID
+# ----------------------------------------
+
+def get_product_by_id(product_id):
+
+    try:
+
+        conn = get_connection()
+
+        with conn.cursor() as cur:
+
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    name,
+                    description,
+                    category,
+                    "subCategory",
+                    "articleType",
+                    gender,
+                    color,
+                    season,
+                    usage,
+                    image,
+                    price,
+                    embedding
+                FROM products
+                WHERE id = %s
+                """,
+                (product_id,)
+            )
+
+            row = cur.fetchone()
+
+        conn.close()
+
+        if row:
+            return map_product(row)
+
+        return None
+
+    except Exception as e:
+
+        print("\n========== GET PRODUCT ERROR ==========")
+        print(e)
+        print("=======================================\n")
+
+        return None        
+
+
+# ----------------------------------------
+# Get Similar Candidate Products
+# ----------------------------------------
+
+def get_similar_candidate_products(category, article_type, gender=None):
+
+    query = """
+        SELECT
+            id,
+            name,
+            description,
+            category,
+            "subCategory",
+            "articleType",
+            gender,
+            color,
+            season,
+            usage,
+            image,
+            price,
+            embedding
+        FROM products
+        WHERE
+            LOWER(category)=LOWER(%s)
+            AND LOWER("articleType")=LOWER(%s)
+    """
+
+    params = [category, article_type]
+
+    if gender:
+        query += " AND LOWER(gender)=LOWER(%s)"
+        params.append(gender)
+
+    query += " LIMIT 500"
+
+    try:
+
+        conn = get_connection()
+
+        with conn.cursor() as cur:
+
+            cur.execute(query, params)
+
+            rows = cur.fetchall()
+
+        conn.close()
+
+        return [map_product(row) for row in rows]
+
+    except Exception as e:
+
+        print("\n========== CANDIDATE QUERY ERROR ==========")
+        print(e)
+        print("===========================================\n")
+
+        return []
+
+
+
+# ----------------------------------------
 # Get Filtered Products
 # ----------------------------------------
 

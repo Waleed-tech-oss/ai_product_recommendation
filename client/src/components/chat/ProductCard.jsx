@@ -1,6 +1,10 @@
 import "./ProductCard.css";
 
-export default function ProductCard({ product }) {
+export default function ProductCard({
+  product,
+  onMoreLikeThis,
+  loading,
+}) {
   return (
     <div className="product-card">
 
@@ -28,6 +32,7 @@ export default function ProductCard({ product }) {
         </div>
 
         {product.score && (
+
           <div className="match-section">
 
             <div className="match-header">
@@ -52,9 +57,11 @@ export default function ProductCard({ product }) {
             </div>
 
           </div>
+
         )}
 
         {product.explanation && (
+
           <div className="ai-box">
 
             <h4>🤖 Why AI Recommended</h4>
@@ -62,6 +69,7 @@ export default function ProductCard({ product }) {
             <p>{product.explanation.summary}</p>
 
             {product.explanation.reasons?.length > 0 && (
+
               <ul>
 
                 {product.explanation.reasons.map((reason, index) => (
@@ -71,14 +79,42 @@ export default function ProductCard({ product }) {
                 ))}
 
               </ul>
+
             )}
 
           </div>
+
         )}
 
-        <button className="details-btn">
-          View Details
-        </button>
+        {/* More Like This Reason */}
+
+        {product.reason && (
+
+          <div className="ai-box">
+
+            <h4>✨ Why Similar?</h4>
+
+            <p>{product.reason}</p>
+
+          </div>
+
+        )}
+
+        <div className="product-actions">
+
+          <button className="details-btn">
+            View Details
+          </button>
+
+          <button
+    className="more-like-btn"
+    disabled={loading}
+    onClick={() => onMoreLikeThis(product._id)}
+>
+    {loading ? "Loading..." : "🔍 More Like This"}
+</button>
+
+        </div>
 
       </div>
 

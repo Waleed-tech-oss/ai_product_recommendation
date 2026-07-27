@@ -1,7 +1,11 @@
 import "./ProductGrid.css";
 import ProductCard from "./ProductCard";
 
-export default function ProductGrid({ products }) {
+export default function ProductGrid({
+  products,
+  onMoreLikeThis,
+  loading,
+}) {
   return (
     <div className="product-grid">
 
@@ -12,10 +16,14 @@ export default function ProductGrid({ products }) {
       <div className="products-list">
 
         {products.map((product) => (
+
           <ProductCard
             key={product._id}
             product={product}
+            onMoreLikeThis={onMoreLikeThis}
+            loading={loading}
           />
+
         ))}
 
       </div>

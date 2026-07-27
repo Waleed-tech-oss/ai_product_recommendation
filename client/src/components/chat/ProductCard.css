@@ -124,3 +124,27 @@
 .details-btn:hover{
     background:#00b8de;
 }
+
+
+
+.product-actions{
+    display:flex;
+    gap:10px;
+    margin-top:15px;
+}
+
+.more-like-btn{
+    flex:1;
+    padding:10px;
+    border:none;
+    border-radius:8px;
+    cursor:pointer;
+    background:#0ea5e9;
+    color:white;
+    font-weight:600;
+    transition:.3s;
+}
+
+.more-like-btn:hover{
+    background:#0284c7;
+}

@@ -9,7 +9,10 @@ from services.clip_service import (
     generate_embedding,
     generate_text_embedding,
 )
-from services.recommendation_service import find_similar_products
+from services.recommendation_service import (
+    find_similar_products,
+    get_more_like_this
+)
 from services.groq_service import generate_explanations
 
 load_dotenv()
@@ -23,6 +26,12 @@ router = APIRouter()
 class TextSearchRequest(BaseModel):
     query: str
 
+# --------------------------------
+# More Like This Request
+# --------------------------------
+
+class MoreLikeThisRequest(BaseModel):
+    productId: str
 
 # --------------------------------
 # Image Recommendation
@@ -109,3 +118,31 @@ async def text_search(request: TextSearchRequest):
             status_code=500,
             detail=str(e)
         )
+
+
+
+# --------------------------------
+# More Like This
+# --------------------------------
+
+@router.post("/more-like-this")
+async def more_like_this(request: MoreLikeThisRequest):
+
+    try:
+
+        recommendations = get_more_like_this(
+            request.productId
+        )
+
+        return {
+            "success": True,
+            "totalRecommendations": len(recommendations),
+            "recommendedProducts": recommendations
+        }
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )        

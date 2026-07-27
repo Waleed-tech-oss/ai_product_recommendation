@@ -5,6 +5,8 @@ import FilterChips from "./FilterChips";
 export default function ProductSidebar({
   products,
   filters = {},
+  onMoreLikeThis,
+  loading,
 }) {
   return (
     <aside className="product-sidebar">
@@ -28,6 +30,7 @@ export default function ProductSidebar({
         <FilterChips filters={filters} />
 
         {products.length === 0 ? (
+
           <div className="empty-products">
 
             <div className="empty-icon">🛍</div>
@@ -39,8 +42,15 @@ export default function ProductSidebar({
             </p>
 
           </div>
+
         ) : (
-          <ProductGrid products={products} />
+
+          <ProductGrid
+            products={products}
+            onMoreLikeThis={onMoreLikeThis}
+            loading={loading}
+          />
+
         )}
 
       </div>
