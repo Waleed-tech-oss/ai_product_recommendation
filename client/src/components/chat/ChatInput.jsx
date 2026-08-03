@@ -1,215 +1,443 @@
-import { useEffect, useState } from "react";
-import "./ChatInput.css";
 import {
-  sendMessage,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+import {
+  ImagePlus,
+  Search,
+  X,
+} from "lucide-react";
+
+import "./ChatInput.css";
+import "./ChatImageUpload.css";
+
+import {
   getSuggestions,
 } from "../../services/chatApi";
-import { Search } from "lucide-react";
 
-const SESSION_ID = crypto.randomUUID();
+
+const ALLOWED_IMAGE_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+];
+
+const MAX_IMAGE_BYTES =
+  8 * 1024 * 1024;
+
 
 export default function ChatInput({
-  messages,
-  setMessages,
-  setProducts,
-  setFilters,
+  onSend,
+  onImageSend,
   loading,
-  setLoading,
 }) {
   const [text, setText] = useState("");
-  const [suggestions, setSuggestions] = useState([]);
-  const [showSuggestions, setShowSuggestions] = useState(false);
-  const [selectedIndex, setSelectedIndex] = useState(-1);
+  const [
+    suggestions,
+    setSuggestions,
+  ] = useState([]);
+  const [
+    showSuggestions,
+    setShowSuggestions,
+  ] = useState(false);
+  const [
+    selectedIndex,
+    setSelectedIndex,
+  ] = useState(-1);
+  const [
+    selectedImage,
+    setSelectedImage,
+  ] = useState(null);
+  const [
+    imagePreview,
+    setImagePreview,
+  ] = useState("");
+  const [
+    imageError,
+    setImageError,
+  ] = useState("");
 
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
+    const query = text.trim();
 
-  if (text.trim().length < 2) {
-    setSuggestions([]);
-    setShowSuggestions(false);
-    setSelectedIndex(-1);
-    return;
+    // Autocomplete is useful for normal text chat,
+    // but distracting during an image-guided search.
+    if (
+      selectedImage ||
+      query.length < 2
+    ) {
+      setSuggestions([]);
+      setShowSuggestions(false);
+      setSelectedIndex(-1);
+      return undefined;
+    }
+
+    const timer = setTimeout(
+      async () => {
+        try {
+          const data =
+            await getSuggestions(query);
+
+          setSuggestions(
+            data.suggestions || []
+          );
+          setShowSuggestions(true);
+          setSelectedIndex(-1);
+        } catch (error) {
+          console.error(
+            "Suggestion error:",
+            error
+          );
+          setSuggestions([]);
+          setShowSuggestions(false);
+        }
+      },
+      300
+    );
+
+    return () => clearTimeout(timer);
+  }, [text, selectedImage]);
+
+  useEffect(
+    () => () => {
+      if (imagePreview) {
+        URL.revokeObjectURL(
+          imagePreview
+        );
+      }
+    },
+    [imagePreview]
+  );
+
+  function clearSelectedImage() {
+    if (imagePreview) {
+      URL.revokeObjectURL(
+        imagePreview
+      );
+    }
+
+    setSelectedImage(null);
+    setImagePreview("");
+    setImageError("");
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
   }
 
-  const timer = setTimeout(async () => {
+  function handleImageSelection(
+    event
+  ) {
+    const file =
+      event.target.files?.[0];
 
-    try {
-
-      const data = await getSuggestions(text);
-
-      setSuggestions(data.suggestions || []);
-      setShowSuggestions(true);
-      setSelectedIndex(-1);
-
-    } catch (err) {
-
-      console.error(err);
-
+    if (!file) {
+      return;
     }
 
-  }, 300);
+    if (
+      !ALLOWED_IMAGE_TYPES.includes(
+        file.type
+      )
+    ) {
+      setImageError(
+        "Only JPG, PNG, and WEBP images are supported."
+      );
+      event.target.value = "";
+      return;
+    }
 
-  return () => clearTimeout(timer);
+    if (file.size > MAX_IMAGE_BYTES) {
+      setImageError(
+        "Image must be smaller than 8 MB."
+      );
+      event.target.value = "";
+      return;
+    }
 
-}, [text]);
+    if (imagePreview) {
+      URL.revokeObjectURL(
+        imagePreview
+      );
+    }
 
-function highlightMatch(text, query) {
-  if (!query) return text;
+    setSelectedImage(file);
+    setImagePreview(
+      URL.createObjectURL(file)
+    );
+    setImageError("");
+    setSuggestions([]);
+    setShowSuggestions(false);
+  }
 
-  const index = text.toLowerCase().indexOf(query.toLowerCase());
+  function highlightMatch(
+    suggestionText,
+    query
+  ) {
+    if (!query) {
+      return suggestionText;
+    }
 
-  if (index === -1) return text;
+    const index = suggestionText
+      .toLowerCase()
+      .indexOf(query.toLowerCase());
 
-  const before = text.slice(0, index);
-  const match = text.slice(index, index + query.length);
-  const after = text.slice(index + query.length);
+    if (index === -1) {
+      return suggestionText;
+    }
 
-  return (
-    <>
-      {before}
-      <span className="highlight-text">{match}</span>
-      {after}
-    </>
-  );
-}
+    const before =
+      suggestionText.slice(0, index);
+    const match = suggestionText.slice(
+      index,
+      index + query.length
+    );
+    const after = suggestionText.slice(
+      index + query.length
+    );
 
+    return (
+      <>
+        {before}
+        <span className="highlight-text">
+          {match}
+        </span>
+        {after}
+      </>
+    );
+  }
 
+  async function handleSend(
+    customText = null
+  ) {
+    const textToSend =
+      typeof customText === "string"
+        ? customText.trim()
+        : text.trim();
 
-  async function handleSend(customText = text) {
-    if (!customText.trim() || loading) return;
+    if (
+      (!textToSend && !selectedImage)
+      || loading
+    ) {
+      return;
+    }
 
     setSuggestions([]);
     setShowSuggestions(false);
     setSelectedIndex(-1);
 
+    if (selectedImage) {
+      const imageFile = selectedImage;
 
-    const userMessage = {
-      id: Date.now(),
-      sender: "user",
-      text: customText,
-    };
+      // Keep the object URL alive until the parent has
+      // converted the file into a stable chat preview.
+      await onImageSend(
+        textToSend,
+        imageFile
+      );
 
-    setMessages((prev) => [...prev, userMessage]);
-
-    const query = customText;
-    setText("");
-    setLoading(true);
-
-    try {
-      const data = await sendMessage(SESSION_ID, query);
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: Date.now() + 1,
-          sender: "assistant",
-          text:
-            data.message ||
-            `I found ${data.totalFilteredProducts} matching products.`,
-        },
-      ]);
-
-      console.log(data);
-
-      setProducts(data.recommendedProducts || []);
-      setFilters(data.filters || {});
-
-      console.log(data.filters);
-    } catch (err) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: Date.now() + 2,
-          sender: "assistant",
-          text: "Something went wrong.",
-        },
-      ]);
-
-      console.error(err);
+      clearSelectedImage();
+    } else {
+      await onSend(textToSend);
     }
 
-    setLoading(false);
+    setText("");
+  }
+
+  function handleKeyDown(event) {
+    if (!showSuggestions) {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        handleSend();
+      }
+
+      return;
+    }
+
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+
+      setSelectedIndex((previous) =>
+        previous <
+        suggestions.length - 1
+          ? previous + 1
+          : previous
+      );
+
+      return;
+    }
+
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+
+      setSelectedIndex((previous) =>
+        previous > 0
+          ? previous - 1
+          : 0
+      );
+
+      return;
+    }
+
+    if (event.key === "Escape") {
+      setShowSuggestions(false);
+      setSelectedIndex(-1);
+      return;
+    }
+
+    if (event.key === "Enter") {
+      event.preventDefault();
+
+      if (
+        selectedIndex >= 0 &&
+        suggestions[selectedIndex]
+      ) {
+        handleSend(
+          suggestions[selectedIndex]
+        );
+      } else {
+        handleSend();
+      }
+    }
   }
 
   return (
     <div className="chat-input-wrapper">
+      {imagePreview && (
+        <div className="chat-image-preview">
+          <img
+            src={imagePreview}
+            alt="Selected upload"
+          />
+
+          <div className="chat-image-preview-info">
+            <strong>
+              {selectedImage?.name}
+            </strong>
+
+            <span>
+              Add optional text for hybrid search
+            </span>
+          </div>
+
+          <button
+            type="button"
+            className="remove-chat-image"
+            onClick={
+              clearSelectedImage
+            }
+            disabled={loading}
+            aria-label="Remove selected image"
+          >
+            <X size={18} />
+          </button>
+        </div>
+      )}
+
+      {imageError && (
+        <p className="chat-image-error">
+          {imageError}
+        </p>
+      )}
+
       <div className="chat-input-container">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          className="hidden-image-input"
+          onChange={
+            handleImageSelection
+          }
+          disabled={loading}
+        />
+
+        <button
+          type="button"
+          className="image-upload-button"
+          onClick={() =>
+            fileInputRef.current?.click()
+          }
+          disabled={loading}
+          title="Upload product image"
+          aria-label="Upload product image"
+        >
+          <ImagePlus size={20} />
+        </button>
 
         <input
           value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-
-  if (!showSuggestions) {
-    if (e.key === "Enter") {
-      handleSend();
-    }
-    return;
-  }
-
-  if (e.key === "ArrowDown") {
-    e.preventDefault();
-
-    setSelectedIndex((prev) =>
-      prev < suggestions.length - 1 ? prev + 1 : prev
-    );
-  }
-
-  else if (e.key === "ArrowUp") {
-    e.preventDefault();
-
-    setSelectedIndex((prev) =>
-      prev > 0 ? prev - 1 : 0
-    );
-  }
-
-  else if (e.key === "Enter") {
-    e.preventDefault();
-
-    if (selectedIndex >= 0) {
-  const selected = suggestions[selectedIndex];
-
-  setText(selected);
-  setShowSuggestions(false);
-
-  handleSend(selected);
-} else {
-      handleSend();
-    }
-  }
-}}
-          placeholder="Ask anything... (e.g. Show white shirts under Rs.5000)"
+          onChange={(event) =>
+            setText(event.target.value)
+          }
+          onKeyDown={handleKeyDown}
+          placeholder={
+            selectedImage
+              ? (
+                  "Optional: is jaisa black product " +
+                  "under $100 dikhao"
+                )
+              : (
+                  "Ask anything... " +
+                  "(e.g. Show white shirts under Rs.5000)"
+                )
+          }
+          disabled={loading}
         />
 
-        {showSuggestions && suggestions.length > 0 && (
-  <div className="suggestions-dropdown">
-    {suggestions.map((item, index) => (
-      <div
-        key={index}
-        className={`suggestion-item ${
-  selectedIndex === index ? "active-suggestion" : ""
-}`}
-        onClick={() => {
-  setText(item);
-  setShowSuggestions(false);
+        {showSuggestions &&
+          suggestions.length > 0 && (
+            <div className="suggestions-dropdown">
+              {suggestions.map(
+                (item, index) => (
+                  <button
+                    type="button"
+                    key={`${item}-${index}`}
+                    className={`suggestion-item ${
+                      selectedIndex ===
+                      index
+                        ? "active-suggestion"
+                        : ""
+                    }`}
+                    onMouseDown={(
+                      event
+                    ) => {
+                      event.preventDefault();
+                    }}
+                    onClick={() =>
+                      handleSend(item)
+                    }
+                  >
+                    <Search size={16} />
 
-  handleSend(item);
-}}
-      >
-        <Search size={16} />
-        <span>{highlightMatch(item, text)}</span>
-      </div>
-    ))}
-  </div>
-)}
+                    <span>
+                      {highlightMatch(
+                        item,
+                        text
+                      )}
+                    </span>
+                  </button>
+                )
+              )}
+            </div>
+          )}
 
         <button
-          disabled={loading}
-          onClick={handleSend}
+          type="button"
+          disabled={
+            loading ||
+            (
+              !text.trim()
+              && !selectedImage
+            )
+          }
+          onClick={() => handleSend()}
         >
           {loading ? "..." : "Send"}
         </button>
-
       </div>
     </div>
   );

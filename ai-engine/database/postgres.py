@@ -200,27 +200,7 @@ def get_similar_candidate_products(category, article_type, gender=None):
 # Get Filtered Products
 # ----------------------------------------
 
-def get_filtered_products(filters):
 
-    query = """
-        SELECT
-            id,
-            shopify_id,
-            title,
-            handle,
-            vendor,
-            product_type,
-            image_url,
-            sku,
-            price,
-            embedding
-        FROM shopify_products
-        WHERE 1=1
-    """
-
-    params = []
-
-   # ----------------------------------------
 # Product Type / Title Search
 # ----------------------------------------
 
@@ -489,3 +469,204 @@ def get_chat_suggestions(query):
     conn.close()
 
     return [row[0] for row in rows]
+
+
+
+
+# Add get_catalog_vocabulary() anywhere in database/postgres.py.
+#
+# Then replace the existing get_filtered_products() with the updated
+# function below.
+#
+# No other database functions need to be removed.
+
+
+def get_catalog_vocabulary():
+
+    try:
+        conn = get_connection()
+
+        with conn.cursor() as cur:
+
+            cur.execute(
+                """
+                SELECT DISTINCT product_type
+                FROM shopify_products
+                WHERE product_type IS NOT NULL
+                  AND TRIM(product_type) <> ''
+                ORDER BY product_type
+                """
+            )
+
+            product_types = [
+                row[0]
+                for row in cur.fetchall()
+            ]
+
+            cur.execute(
+                """
+                SELECT DISTINCT vendor
+                FROM shopify_products
+                WHERE vendor IS NOT NULL
+                  AND TRIM(vendor) <> ''
+                ORDER BY vendor
+                """
+            )
+
+            vendors = [
+                row[0]
+                for row in cur.fetchall()
+            ]
+
+        conn.close()
+
+        return {
+            "product_types": product_types,
+            "vendors": vendors,
+        }
+
+    except Exception as error:
+
+        print(
+            "\n========== VOCABULARY ERROR =========="
+        )
+        print(error)
+        print(
+            "======================================\n"
+        )
+
+        return {
+            "product_types": [],
+            "vendors": [],
+        }
+
+
+def get_filtered_products(
+    filters,
+    limit=200,
+):
+
+    query = """
+        SELECT
+            id,
+            shopify_id,
+            title,
+            handle,
+            vendor,
+            product_type,
+            image_url,
+            sku,
+            price,
+            embedding
+        FROM shopify_products
+        WHERE 1=1
+    """
+
+    params = []
+
+    # Product type / title search
+    if filters.get("productType"):
+
+        query += """
+            AND (
+                LOWER(COALESCE(product_type, '')) = LOWER(%s)
+                OR LOWER(COALESCE(title, '')) LIKE LOWER(%s)
+            )
+        """
+
+        params.append(
+            filters["productType"]
+        )
+        params.append(
+            f"%{filters['productType']}%"
+        )
+
+    # Vendor
+    if filters.get("vendor"):
+
+        query += """
+            AND LOWER(COALESCE(vendor, '')) = LOWER(%s)
+        """
+
+        params.append(
+            filters["vendor"]
+        )
+
+    # Minimum price
+    if filters.get("minPrice") is not None:
+
+        query += " AND price >= %s"
+        params.append(
+            filters["minPrice"]
+        )
+
+    # Maximum price
+    if filters.get("maxPrice") is not None:
+
+        query += " AND price <= %s"
+        params.append(
+            filters["maxPrice"]
+        )
+
+    # Safe sorting
+    sort = filters.get("sort")
+
+    if sort == "price_low":
+        query += (
+            " ORDER BY price ASC NULLS LAST"
+        )
+
+    elif sort == "price_high":
+        query += (
+            " ORDER BY price DESC NULLS LAST"
+        )
+
+    # Safe dynamic limit
+    try:
+        limit = int(limit)
+    except (TypeError, ValueError):
+        limit = 200
+
+    limit = max(
+        1,
+        min(limit, 200),
+    )
+
+    query += " LIMIT %s"
+    params.append(limit)
+
+    try:
+        conn = get_connection()
+
+        with conn.cursor() as cur:
+            cur.execute(
+                query,
+                params,
+            )
+            rows = cur.fetchall()
+
+        conn.close()
+
+        return [
+            map_shopify_product(row)
+            for row in rows
+        ]
+
+    except Exception as error:
+
+        print(
+            "\n========== SHOPIFY FILTER ERROR =========="
+        )
+        print(error)
+        print(
+            "==========================================\n"
+        )
+
+        return []
+
+
+
+
+
+
+
