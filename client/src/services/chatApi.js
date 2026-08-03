@@ -12,3 +12,13 @@ export async function sendMessage(sessionId, message) {
 
   return response.data;
 }
+
+export async function getSuggestions(query) {
+  const response = await API.get("/chat/suggestions", {
+    params: {
+      q: query,
+    },
+  });
+
+  return response.data;
+}

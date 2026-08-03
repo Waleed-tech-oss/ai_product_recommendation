@@ -1,7 +1,8 @@
 import numpy as np
 from database.postgres import (
     get_product_by_id,
-    get_similar_candidate_products
+    get_similar_candidate_products,
+    get_all_shopify_products
 )
 
 # ----------------------------------------
@@ -32,22 +33,25 @@ def find_similar_products(query_embedding, products, top_k=5):
         if not embedding:
             continue
 
-        score = cosine_similarity(query_embedding, embedding)
+        score = cosine_similarity(
+            query_embedding,
+            embedding
+        )
 
         similarities.append({
-            "_id": str(product["_id"]),
-            "name": product.get("name"),
-            "description": product.get("description"),
-            "category": product.get("category"),
-            "subCategory": product.get("subCategory"),
-            "articleType": product.get("articleType"),
-            "gender": product.get("gender"),
-            "color": product.get("color"),
-            "season": product.get("season"),
-            "usage": product.get("usage"),
-            "image": product.get("image"),
+
+            "id": str(product["id"]),
+            "shopify_id": product.get("shopify_id"),
+            "title": product.get("title"),
+            "handle": product.get("handle"),
+            "vendor": product.get("vendor"),
+            "product_type": product.get("product_type"),
+            "image_url": product.get("image_url"),
+            "sku": product.get("sku"),
             "price": product.get("price"),
+
             "score": round(float(score), 4)
+
         })
 
     similarities.sort(
@@ -56,8 +60,6 @@ def find_similar_products(query_embedding, products, top_k=5):
     )
 
     return similarities[:top_k]
-
-
 # ----------------------------------------
 # More Like This (Hybrid AI Recommendation)
 # ----------------------------------------
@@ -151,7 +153,7 @@ def get_more_like_this(product_id, top_k=6):
 
         similarities.append({
 
-            "_id": str(product["_id"]),
+            "id": str(product["_id"]),
             "name": product.get("name"),
             "description": product.get("description"),
             "category": product.get("category"),
@@ -179,3 +181,53 @@ def get_more_like_this(product_id, top_k=6):
     )
 
     return similarities[:top_k]
+
+
+
+
+# ----------------------------------------
+# Shopify Image Recommendation
+# ----------------------------------------
+
+def find_similar_shopify_products(query_embedding, top_k=5):
+
+    products = get_all_shopify_products()
+
+    similarities = []
+
+    for product in products:
+
+        embedding = product.get("embedding")
+
+        if not embedding:
+            continue
+
+        score = cosine_similarity(
+            query_embedding,
+            embedding
+        )
+
+        similarities.append({
+
+            "id": product["id"],
+            "shopify_id": product["shopify_id"],
+            "title": product["title"],
+            "handle": product["handle"],
+            "vendor": product["vendor"],
+            "product_type": product["product_type"],
+            "image_url": product["image_url"],
+            "sku": product["sku"],
+            "price": product["price"],
+
+            "score": round(float(score), 4)
+
+        })
+
+    similarities.sort(
+        key=lambda x: x["score"],
+        reverse=True
+    )
+
+    return similarities[:top_k]
+
+    

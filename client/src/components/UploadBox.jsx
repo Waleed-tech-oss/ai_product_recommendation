@@ -10,9 +10,11 @@ function UploadBox() {
   const [loading, setLoading] = useState(false);
 
   const handleUpload = async () => {
+    
     if (!file) {
       alert("Please select an image");
       return;
+      
     }
 
     const formData = new FormData();
@@ -22,8 +24,8 @@ function UploadBox() {
       setLoading(true);
 
       const { data } = await API.post("/recommend", formData);
-
-      setProducts(data.recommendations);
+         console.log("Recommend API Response:", data);
+         setProducts(data.recommendations || []);
     } catch (error) {
       console.error(error);
       alert("Failed to get recommendations");
@@ -38,7 +40,7 @@ function UploadBox() {
         <h2>📤 Upload Product Image</h2>
 
         <p className="upload-text">
-          Select a fashion product image to get AI-powered recommendations.
+          Upload any product image and let AI find similar products from your Shopify store.
         </p>
 
         <input

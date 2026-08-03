@@ -5,137 +5,52 @@ def normalize_filters(filters: dict):
 
     normalized = filters.copy()
 
-    # ----------------------------
-    # Category Mapping
-    # ----------------------------
-    category_map = {
-        "shoe": "Footwear",
-        "shoes": "Footwear",
-        "footwear": "Footwear",
+    # ----------------------------------------
+    # Product Type Mapping
+    # ----------------------------------------
 
-        "shirt": "Apparel",
-        "shirts": "Apparel",
-        "tshirt": "Apparel",
-        "t-shirt": "Apparel",
-        "jeans": "Apparel",
-        "pants": "Apparel",
-        "trousers": "Apparel",
-        "clothing": "Apparel",
-        "apparel": "Apparel",
+    product_type_map = {
 
-        "watch": "Accessories",
-        "watches": "Accessories",
+        "snowboard": "snowboard",
+        "snowboards": "snowboard",
 
-        "bag": "Accessories",
-        "bags": "Accessories"
+        "gift card": "gift_card",
+        "gift cards": "gift_card",
+
+        "t-shirt": "t-shirt",
+        "tshirt": "t-shirt",
+        "shirt": "shirt",
+        "shirts": "shirt",
+
+        "hoodie": "hoodie",
+        "hoodies": "hoodie",
+
+        "cap": "cap",
+        "caps": "cap"
+
     }
 
-    # ----------------------------
-    # SubCategory Mapping
-    # ----------------------------
-    subcategory_map = {
+    # ----------------------------------------
+    # Normalize Product Type
+    # ----------------------------------------
 
-        "sports shoes": "Shoes",
-        "running shoes": "Shoes",
-        "casual shoes": "Shoes",
-        "formal shoes": "Shoes",
-        "shoe": "Shoes",
-        "shoes": "Shoes",
+    product_type = normalized.get("productType")
 
-        "jeans": "Bottomwear",
-        "pants": "Bottomwear",
-        "trousers": "Bottomwear",
+    if product_type:
 
-        "shirt": "Topwear",
-        "shirts": "Topwear",
-        "tshirt": "Topwear",
-        "t-shirt": "Topwear"
-    }
-
-    # ----------------------------
-    # Article Type Mapping
-    # ----------------------------
-    article_map = {
-
-        "sports shoes": "Sports Shoes",
-        "running shoes": "Sports Shoes",
-
-        "casual shoes": "Casual Shoes",
-
-        "formal shoes": "Formal Shoes",
-
-        "jeans": "Jeans",
-
-        "shirt": "Shirts",
-        "shirts": "Shirts",
-
-        "tshirt": "Tshirts",
-        "t-shirt": "Tshirts"
-    }
-
-    # ----------------------------
-    # Normalize Category
-    # ----------------------------
-    category = normalized.get("category")
-
-    if category:
-        normalized["category"] = category_map.get(
-            category.lower(),
-            category
+        normalized["productType"] = product_type_map.get(
+            product_type.lower(),
+            product_type.lower()
         )
 
-    # ----------------------------
-    # Normalize SubCategory
-    # ----------------------------
-    sub = normalized.get("subCategory")
+    # ----------------------------------------
+    # Normalize Vendor
+    # ----------------------------------------
 
-    if sub:
-        normalized["subCategory"] = subcategory_map.get(
-            sub.lower(),
-            sub
-        )
+    vendor = normalized.get("vendor")
 
-    # ----------------------------
-    # Normalize Article Type
-    # ----------------------------
-    article = normalized.get("articleType")
+    if vendor:
 
-    if article:
-        normalized["articleType"] = article_map.get(
-            article.lower(),
-            article
-        )
-
-    # ----------------------------
-    # Normalize Gender
-    # ----------------------------
-    gender = normalized.get("gender")
-
-    if gender:
-        normalized["gender"] = gender.title()
-
-    # ----------------------------
-    # Normalize Color
-    # ----------------------------
-    color = normalized.get("color")
-
-    if color:
-        normalized["color"] = color.title()
-
-    # ----------------------------
-    # Normalize Season
-    # ----------------------------
-    season = normalized.get("season")
-
-    if season:
-        normalized["season"] = season.title()
-
-    # ----------------------------
-    # Normalize Usage
-    # ----------------------------
-    usage = normalized.get("usage")
-
-    if usage:
-        normalized["usage"] = usage.title()
+        normalized["vendor"] = vendor.strip()
 
     return normalized

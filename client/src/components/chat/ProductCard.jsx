@@ -10,24 +10,28 @@ export default function ProductCard({
 
       <div className="product-image">
         <img
-          src={`http://127.0.0.1:8000/images/${product.image}`}
-          alt={product.name}
+          src={product.image_url}
+          alt={product.title}
         />
       </div>
 
       <div className="product-content">
 
-        <h3>{product.name}</h3>
+        <h3>{product.title}</h3>
 
         <div className="product-info">
 
           <span className="category">
-            {product.category}
+            {product.product_type}
           </span>
 
           <span className="price">
-            Rs. {Number(product.price).toLocaleString()}
+            ${Number(product.price).toFixed(2)}
           </span>
+
+          <p className="vendor">
+               {product.vendor}
+           </p>
 
         </div>
 
@@ -106,13 +110,13 @@ export default function ProductCard({
             View Details
           </button>
 
-          <button
+          {/* <button
     className="more-like-btn"
     disabled={loading}
-    onClick={() => onMoreLikeThis(product._id)}
+    onClick={() => onMoreLikeThis(product.id)}
 >
     {loading ? "Loading..." : "🔍 More Like This"}
-</button>
+</button> */}
 
         </div>
 

@@ -56,3 +56,73 @@
   opacity: 0.6;
   cursor: not-allowed;
 }
+
+.chat-input-container {
+  position: relative;
+}
+
+.suggestions-dropdown {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 8px);
+
+  background: #1f2937;
+  border: 1px solid rgba(163, 254, 255, 0.2);
+  border-radius: 14px;
+
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+
+  overflow: hidden;
+  z-index: 1000;
+}
+
+.suggestion-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+
+  padding: 14px 18px;
+
+  color: #fff;
+  font-size: 15px;
+
+  cursor: pointer;
+  transition: 0.2s ease;
+}
+
+.suggestion-item:hover {
+  background: rgba(163, 254, 255, 0.12);
+  color: #A3FEFF;
+}
+
+.suggestions-dropdown {
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.suggestions-dropdown::-webkit-scrollbar {
+  width: 6px;
+}
+
+.suggestions-dropdown::-webkit-scrollbar-thumb {
+  background: #3b4a5f;
+  border-radius: 10px;
+}
+
+
+.highlight-text {
+  color: #A3FEFF;
+  font-weight: 700;
+}
+
+.highlight-text {
+  color: #00E5FF;
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+.active-suggestion {
+  background: rgba(163, 254, 255, 0.15);
+  color: #A3FEFF;
+}

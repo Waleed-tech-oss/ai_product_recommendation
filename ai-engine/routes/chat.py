@@ -1,5 +1,10 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from pydantic import BaseModel
+
+from database.postgres import (
+    get_filtered_products,
+    get_chat_suggestions
+)
 
 from services.chat_service import parse_user_query
 from services.filter_normalizer import normalize_filters
@@ -26,6 +31,20 @@ router = APIRouter(
 class ChatRequest(BaseModel):
     sessionId: str
     message: str
+
+
+
+@router.get("/suggestions")
+def chat_suggestions(
+    q: str = Query(..., min_length=1)
+):
+    suggestions = get_chat_suggestions(q)
+
+    return {
+        "success": True,
+        "suggestions": suggestions
+    }
+
 
 
 @router.post("/search")

@@ -9,11 +9,11 @@ function Home() {
       <Navbar />
 
       <main className="home">
-        <h1>Find Similar Fashion Products</h1>
+        <h1>AI Shopify Product Recommendation</h1>
 
         <p>
-          Upload a fashion product image and let AI recommend
-          similar products instantly.
+           Upload a product image and discover visually similar
+  Shopify products using AI.
         </p>
 
         <UploadBox />

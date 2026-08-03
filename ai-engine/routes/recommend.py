@@ -11,6 +11,7 @@ from services.clip_service import (
 )
 from services.recommendation_service import (
     find_similar_products,
+    find_similar_shopify_products,
     get_more_like_this
 )
 from services.groq_service import generate_explanations
@@ -49,13 +50,9 @@ async def recommend(file: UploadFile = File(...)):
         # Generate Image Embedding
         embedding = generate_embedding(temp_path)
 
-        # Fetch Products
-        products = get_all_products()
-
-        # Find Similar Products
-        recommendations = find_similar_products(
-            embedding,
-            products
+        # Shopify AI Recommendations
+        recommendations = find_similar_shopify_products(
+            embedding
         )
 
         # Generate AI Explanations (Single Groq Call)

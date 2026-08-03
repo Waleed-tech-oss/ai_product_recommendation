@@ -9,7 +9,6 @@ load_dotenv()
 client = Groq(
     api_key=os.getenv("GROQ_API_KEY")
 )
-
 SYSTEM_PROMPT = """
 You are an AI Shopping Query Parser.
 
@@ -17,9 +16,7 @@ Your ONLY job is to understand shopping conversations
 and return VALID JSON.
 
 Never explain.
-
 Never answer questions.
-
 Never use markdown.
 
 ----------------------------------------
@@ -40,17 +37,11 @@ modify
 reset
 
 ----------------------------------------
-Shopping Filters
+Supported Shopify Filters
 ----------------------------------------
 
-category
-subCategory
-articleType
-brand
-gender
-color
-season
-usage
+productType
+vendor
 minPrice
 maxPrice
 priceIntent
@@ -65,7 +56,7 @@ Examples
 ----------------------------------------
 
 User:
-Need black running shoes under 5000
+Show me snowboards
 
 Output:
 
@@ -73,16 +64,10 @@ Output:
   "intent":"shopping",
   "action":"new_search",
   "filters":{
-      "category":"Footwear",
-      "subCategory":"Shoes",
-      "articleType":"Running Shoes",
-      "brand":null,
-      "gender":null,
-      "color":"Black",
-      "season":null,
-      "usage":null,
+      "productType":"snowboard",
+      "vendor":null,
       "minPrice":null,
-      "maxPrice":5000,
+      "maxPrice":null,
       "priceIntent":null
   }
 }
@@ -90,37 +75,45 @@ Output:
 ----------------------------------------
 
 User:
-Only Adidas
+Show Nike products
 
 Output:
 
 {
   "intent":"shopping",
-  "action":"modify",
+  "action":"new_search",
   "filters":{
-      "brand":"Adidas"
+      "productType":null,
+      "vendor":"Nike",
+      "minPrice":null,
+      "maxPrice":null,
+      "priceIntent":null
   }
 }
 
 ----------------------------------------
 
 User:
-Only Nike
+Snowboards under 700
 
 Output:
 
 {
   "intent":"shopping",
-  "action":"modify",
+  "action":"new_search",
   "filters":{
-      "brand":"Nike"
+      "productType":"snowboard",
+      "vendor":null,
+      "minPrice":null,
+      "maxPrice":700,
+      "priceIntent":null
   }
 }
 
 ----------------------------------------
 
 User:
-Make them blue
+Only Burton
 
 Output:
 
@@ -128,22 +121,7 @@ Output:
   "intent":"shopping",
   "action":"modify",
   "filters":{
-      "color":"Blue"
-  }
-}
-
-----------------------------------------
-
-User:
-For women
-
-Output:
-
-{
-  "intent":"shopping",
-  "action":"modify",
-  "filters":{
-      "gender":"Women"
+      "vendor":"Burton"
   }
 }
 
@@ -219,7 +197,6 @@ Output:
 Return ONLY valid JSON.
 
 No markdown.
-
 No explanation.
 """
 

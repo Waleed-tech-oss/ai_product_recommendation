@@ -11,9 +11,13 @@ client = Groq(
 )
 
 
+# ----------------------------------------
+# Generate AI Explanations
+# ----------------------------------------
+
 def generate_explanations(user_query, products):
     """
-    Generate AI explanations for all recommended products
+    Generate AI explanations for Shopify product recommendations
     using a single Groq API call.
     """
 
@@ -24,15 +28,9 @@ def generate_explanations(user_query, products):
         product_list += f"""
 Product {i}
 
-Name: {product.get("name")}
-Description: {product.get("description")}
-Category: {product.get("category")}
-Sub Category: {product.get("subCategory")}
-Article Type: {product.get("articleType")}
-Gender: {product.get("gender")}
-Color: {product.get("color")}
-Season: {product.get("season")}
-Usage: {product.get("usage")}
+Title: {product.get("title")}
+Vendor: {product.get("vendor")}
+Product Type: {product.get("product_type")}
 Price: {product.get("price")}
 Similarity Score: {round(product.get("score", 0) * 100)}%
 """
@@ -60,11 +58,12 @@ Rules:
 - Use ONLY the provided product information.
 - Never invent any facts.
 - Never guess information.
-- If Description is empty, ignore it.
-- If any field is empty, simply ignore it.
-- Mention the product's category, article type, usage, season, color or gender only if they exist.
-- Consider the similarity score while writing the summary.
-- Products with higher similarity should have stronger recommendations.
+- Ignore missing fields.
+- Mention Vendor if available.
+- Mention Product Type if available.
+- Mention Price if available.
+- Consider the similarity score while writing the recommendation.
+- Products with higher similarity should receive stronger recommendations.
 
 Return ONLY valid JSON.
 
@@ -76,8 +75,8 @@ Return exactly this structure:
 
 [
   {{
-    "summary":"Excellent match for the user's search.",
-    "reasons":[
+    "summary": "Excellent match for the uploaded image.",
+    "reasons": [
       "...",
       "...",
       "...",
@@ -132,10 +131,13 @@ Return exactly this structure:
 
     except Exception as e:
 
-        print("\nGroq Error:")
+        print("\n========== GROQ ERROR ==========")
         print(e)
+        print("================================\n")
 
-    # ---------- FALLBACK ----------
+    # ----------------------------------------
+    # Fallback Explanations
+    # ----------------------------------------
 
     explanations = []
 
@@ -144,44 +146,34 @@ Return exactly this structure:
         score = round(product.get("score", 0) * 100)
 
         if score >= 90:
-            summary = "Excellent match for your search."
+            summary = "Excellent match for your uploaded image."
         elif score >= 75:
-            summary = "Strong match based on semantic similarity."
+            summary = "Strong visual similarity to your uploaded image."
         elif score >= 60:
-            summary = "Relevant recommendation for your search."
+            summary = "Relevant recommendation based on AI similarity."
         else:
-            summary = "Related product based on available information."
+            summary = "Related product based on available visual information."
 
         reasons = []
 
-        if product.get("category"):
+        if product.get("vendor"):
             reasons.append(
-                f"Belongs to the {product['category']} category."
+                f"Sold by {product['vendor']}."
             )
 
-        if product.get("articleType"):
+        if product.get("product_type"):
             reasons.append(
-                f"Product type: {product['articleType']}."
+                f"Product type: {product['product_type']}."
             )
 
-        if product.get("usage"):
+        if product.get("price") is not None:
             reasons.append(
-                f"Suitable for {product['usage']} use."
-            )
-
-        if product.get("season"):
-            reasons.append(
-                f"Recommended for {product['season']} season."
-            )
-
-        if product.get("color"):
-            reasons.append(
-                f"Available in {product['color']} color."
+                f"Price: ${product['price']}."
             )
 
         while len(reasons) < 4:
             reasons.append(
-                "Selected using AI semantic similarity."
+                "Selected using AI visual similarity."
             )
 
         explanations.append({

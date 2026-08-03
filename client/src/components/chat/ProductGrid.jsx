@@ -18,7 +18,7 @@ export default function ProductGrid({
         {products.map((product) => (
 
           <ProductCard
-            key={product._id}
+            key={product.id}
             product={product}
             onMoreLikeThis={onMoreLikeThis}
             loading={loading}

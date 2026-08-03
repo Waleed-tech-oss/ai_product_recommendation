@@ -1,8 +1,7 @@
 import os
 import psycopg
-
 from dotenv import load_dotenv
-
+from psycopg.types.json import Jsonb
 load_dotenv()
 
 
@@ -206,79 +205,45 @@ def get_filtered_products(filters):
     query = """
         SELECT
             id,
-            name,
-            description,
-            category,
-            "subCategory",
-            "articleType",
-            gender,
-            color,
-            season,
-            usage,
-            image,
+            shopify_id,
+            title,
+            handle,
+            vendor,
+            product_type,
+            image_url,
+            sku,
             price,
             embedding
-        FROM products
+        FROM shopify_products
         WHERE 1=1
     """
 
     params = []
 
+   # ----------------------------------------
+# Product Type / Title Search
+# ----------------------------------------
+
+    if filters.get("productType"):
+
+     query += """
+        AND (
+            LOWER(COALESCE(product_type, '')) = LOWER(%s)
+            OR LOWER(title) LIKE LOWER(%s)
+        )
+    """
+
+    params.append(filters["productType"])
+    params.append(f"%{filters['productType']}%")
     # ----------------------------------------
-    # Category
+    # Vendor
     # ----------------------------------------
 
-    if filters.get("category"):
-        query += " AND LOWER(category)=LOWER(%s)"
-        params.append(filters["category"])
-
-    # ----------------------------------------
-    # Sub Category
-    # ----------------------------------------
-
-    # if filters.get("subCategory"):
-    #     query += ' AND LOWER("subCategory")=LOWER(%s)'
-    #     params.append(filters["subCategory"])
-
-    # ----------------------------------------
-    # Article Type
-    # ----------------------------------------
-
-    if filters.get("articleType"):
-        query += ' AND LOWER("articleType")=LOWER(%s)'
-        params.append(filters["articleType"])
-
-    # ----------------------------------------
-    # Gender
-    # ----------------------------------------
-
-    if filters.get("gender"):
-        query += " AND LOWER(gender)=LOWER(%s)"
-        params.append(filters["gender"])
-
-    # ----------------------------------------
-    # Color
-    # ----------------------------------------
-
-    if filters.get("color"):
-        query += " AND LOWER(color)=LOWER(%s)"
-        params.append(filters["color"])
-
-    # ----------------------------------------
-    # Season
-    # ----------------------------------------
-
-    if filters.get("season"):
-        query += " AND LOWER(season)=LOWER(%s)"
-        params.append(filters["season"])
-
-    # ----------------------------------------
-    # Usage
-    # ----------------------------------------
-
-    if filters.get("usage"):
-        query += " AND LOWER(usage)=LOWER(%s)"
-        params.append(filters["usage"])
+    if filters.get("vendor"):
+        query += """
+            AND LOWER(vendor)=LOWER(%s)
+        """
+        params.append(filters["vendor"])
 
     # ----------------------------------------
     # Minimum Price
@@ -297,7 +262,7 @@ def get_filtered_products(filters):
         params.append(filters["maxPrice"])
 
     # ----------------------------------------
-    # Sorting (Future Ready)
+    # Sorting
     # ----------------------------------------
 
     sort = filters.get("sort")
@@ -309,7 +274,7 @@ def get_filtered_products(filters):
         query += " ORDER BY price DESC"
 
     # ----------------------------------------
-    # Limit Results
+    # Limit
     # ----------------------------------------
 
     query += " LIMIT 200"
@@ -326,12 +291,201 @@ def get_filtered_products(filters):
 
         conn.close()
 
-        return [map_product(row) for row in rows]
+        return [
+            map_shopify_product(row)
+            for row in rows
+        ]
 
     except Exception as e:
 
-        print("\n========== FILTER QUERY ERROR ==========")
+        print("\n========== SHOPIFY FILTER ERROR ==========")
         print(e)
-        print("========================================\n")
+        print("==========================================\n")
 
         return []
+
+
+# ----------------------------------------
+# Save Shopify Product
+# ----------------------------------------
+
+def save_shopify_product(
+    shopify_id,
+    title,
+    handle,
+    vendor,
+    product_type,
+    image_url,
+    sku,
+    price,
+    embedding
+):
+
+    try:
+
+        conn = get_connection()
+
+        with conn.cursor() as cur:
+
+            cur.execute(
+                """
+                INSERT INTO shopify_products (
+
+                    shopify_id,
+                    title,
+                    handle,
+                    vendor,
+                    product_type,
+                    image_url,
+                    sku,
+                    price,
+                    embedding
+
+                )
+
+                VALUES (
+
+                   %s,
+                   %s,
+                   %s,
+                   %s,
+                   %s,
+                   %s,
+                   %s,
+                   %s,
+                   %s
+
+                )
+
+                ON CONFLICT (shopify_id)
+
+                DO UPDATE SET
+
+                    title=EXCLUDED.title,
+                    handle=EXCLUDED.handle,
+                    vendor=EXCLUDED.vendor,
+                    product_type=EXCLUDED.product_type,
+                    image_url=EXCLUDED.image_url,
+                    sku=EXCLUDED.sku,
+                    price=EXCLUDED.price,
+                    embedding=EXCLUDED.embedding
+
+                """,
+
+                (
+                    shopify_id,
+                    title,
+                    handle,
+                    vendor,
+                    product_type,
+                    image_url,
+                    sku,
+                    float(price) if price else None,
+                    Jsonb(embedding)
+                )
+
+            )
+
+        conn.commit()
+
+        conn.close()
+
+    except Exception as e:
+
+        print("\n========== SAVE SHOPIFY PRODUCT ERROR ==========")
+        print(e)
+        print("===============================================\n")
+
+
+
+
+# ----------------------------------------
+# Shopify Product Mapper
+# ----------------------------------------
+
+def map_shopify_product(row):
+
+    return {
+        "id": row[0],
+        "shopify_id": row[1],
+        "title": row[2],
+        "handle": row[3],
+        "vendor": row[4],
+        "product_type": row[5],
+        "image_url": row[6],
+        "sku": row[7],
+        "price": float(row[8]) if row[8] else None,
+        "embedding": row[9]
+    }
+
+
+
+# ----------------------------------------
+# Get All Shopify Products
+# ----------------------------------------
+
+def get_all_shopify_products():
+
+    try:
+
+        conn = get_connection()
+
+        with conn.cursor() as cur:
+
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    shopify_id,
+                    title,
+                    handle,
+                    vendor,
+                    product_type,
+                    image_url,
+                    sku,
+                    price,
+                    embedding
+                FROM shopify_products
+                """
+            )
+
+            rows = cur.fetchall()
+
+        conn.close()
+
+        return [map_shopify_product(row) for row in rows]
+
+    except Exception as e:
+
+        print("\n========== GET SHOPIFY PRODUCTS ERROR ==========")
+        print(e)
+        print("===============================================\n")
+
+        return []    
+
+
+
+
+
+
+def get_chat_suggestions(query):
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    sql = """
+        SELECT DISTINCT title
+        FROM shopify_products
+        WHERE LOWER(title) LIKE LOWER(%s)
+        ORDER BY title
+        LIMIT 5;
+    """
+
+    cur.execute(sql, (f"%{query}%",))
+
+    rows = cur.fetchall()
+
+    cur.close()
+    conn.close()
+
+    return [row[0] for row in rows]
