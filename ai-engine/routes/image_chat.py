@@ -318,6 +318,13 @@ async def image_chat_search(
             ),
             products=products,
             top_k=limit,
+            infer_product_type=(
+                not bool(
+                    merged_filters.get(
+                        "productType"
+                    )
+                )
+            ),
         )
     )
 
@@ -343,6 +350,14 @@ async def image_chat_search(
         })
 
         return response
+
+    inferred_product_type = (
+        recommendations[0].get(
+            "inferredProductType"
+        )
+        if recommendations
+        else None
+    )
 
     if use_text_embedding:
         search_mode = (
@@ -409,6 +424,9 @@ async def image_chat_search(
             ),
         ),
         "filters": merged_filters,
+        "inferredProductType": (
+            inferred_product_type
+        ),
         "queryCorrections": (
             query_corrections
         ),

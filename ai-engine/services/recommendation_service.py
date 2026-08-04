@@ -71,6 +71,115 @@ def _shopify_product_result(
     }
 
 
+
+def _normalized_product_type(value):
+    return " ".join(
+        str(value or "")
+        .strip()
+        .lower()
+        .split()
+    )
+
+
+def _read_float_setting(
+    name,
+    default,
+    minimum=0.0,
+    maximum=1.0,
+):
+    try:
+        value = float(
+            os.getenv(
+                name,
+                str(default),
+            )
+        )
+    except ValueError:
+        value = default
+
+    return max(
+        minimum,
+        min(value, maximum),
+    )
+
+
+def _filter_visual_results(
+    ranked_products,
+    infer_product_type,
+):
+    """
+    Keep visually relevant products and avoid mixing unrelated
+    catalog categories into an uploaded-image result.
+
+    When no exact product type was supplied by the customer,
+    the highest-scoring product is used to infer the likely
+    category. Example: top result is a snowboard, so shirts
+    are excluded from the returned list.
+    """
+    if not ranked_products:
+        return []
+
+    top_result = ranked_products[0]
+    top_score = float(
+        top_result.get("score")
+        or 0.0
+    )
+
+    minimum_score = _read_float_setting(
+        "MIN_VISUAL_RESULT_SCORE",
+        0.20,
+    )
+    maximum_score_gap = _read_float_setting(
+        "MAX_VISUAL_SCORE_GAP",
+        0.12,
+    )
+
+    cutoff = max(
+        minimum_score,
+        top_score - maximum_score_gap,
+    )
+
+    filtered = [
+        product
+        for product in ranked_products
+        if float(
+            product.get("score")
+            or 0.0
+        ) >= cutoff
+    ]
+
+    if not filtered:
+        filtered = [top_result]
+
+    if not infer_product_type:
+        return filtered
+
+    inferred_type = _normalized_product_type(
+        top_result.get("product_type")
+    )
+
+    if not inferred_type:
+        return filtered
+
+    same_type = [
+        product
+        for product in filtered
+        if _normalized_product_type(
+            product.get("product_type")
+        ) == inferred_type
+    ]
+
+    if not same_type:
+        return filtered
+
+    for product in same_type:
+        product["inferredProductType"] = (
+            top_result.get("product_type")
+        )
+
+    return same_type
+
+
 # ----------------------------------------
 # Text-to-product semantic ranking
 # ----------------------------------------
@@ -123,6 +232,7 @@ def find_hybrid_shopify_products(
     text_embedding=None,
     top_k=5,
     image_weight=None,
+    infer_product_type=True,
 ):
     """
     Rank filtered Shopify products using their stored image
@@ -227,7 +337,12 @@ def find_hybrid_shopify_products(
         reverse=True,
     )
 
-    return similarities[:top_k]
+    relevant_results = _filter_visual_results(
+        ranked_products=similarities,
+        infer_product_type=infer_product_type,
+    )
+
+    return relevant_results[:top_k]
 
 
 # ----------------------------------------
@@ -395,4 +510,5 @@ def find_similar_shopify_products(
         products=products,
         text_embedding=None,
         top_k=top_k,
+        infer_product_type=True,
     )
