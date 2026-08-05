@@ -1,8 +1,12 @@
+# ai-engine/routes/chat.py
+import re
+
 from fastapi import (
     APIRouter,
     Query,
 )
 from pydantic import BaseModel
+from typing import Any
 
 from database.postgres import (
     get_all_shopify_products,
@@ -10,10 +14,13 @@ from database.postgres import (
     get_chat_suggestions,
     get_filtered_products,
     get_grouped_products_by_types,
+    get_product_type_profile,
 )
 from database.chat_session import (
     delete_session,
+    get_conversation_state,
     get_session,
+    save_conversation_state,
     save_session,
 )
 
@@ -21,10 +28,17 @@ from services.chat_service import (
     parse_user_query,
 )
 from services.clarification_service import (
+    build_broad_category_clarification,
     build_low_confidence_clarification,
     build_multiple_type_clarification,
     build_no_result_clarification,
+    build_unknown_type_clarification,
     semantic_result_is_low_confidence,
+)
+from services.catalog_intelligence_service import (
+    match_query_to_catalog_facet,
+    prepare_catalog_facets,
+    should_clarify_broad_category,
 )
 from services.clip_service import (
     generate_text_embedding,
@@ -33,6 +47,16 @@ from services.comparison_service import (
     build_product_comparison,
     extract_comparison_targets,
     match_comparison_products,
+)
+from services.conversation_memory_service import (
+    detect_product_detail_request,
+    detect_product_selection_request,
+    detect_similar_product_request,
+    hydrate_memory_products,
+    reference_option_payloads,
+    remember_product_results,
+    resolve_product_references,
+    select_product,
 )
 from services.filter_merger import (
     merge_filters,
@@ -52,9 +76,12 @@ from services.query_normalizer import (
     detect_product_type_mentions,
     normalize_filter_values,
     normalize_query_text,
-    normalize_requested_product_types,
+    resolve_requested_product_types,
+    should_block_parser_only_catalog_types,
+    suggest_catalog_types,
 )
 from services.recommendation_service import (
+    find_more_like_shopify_product,
     find_similar_products,
 )
 
@@ -72,6 +99,16 @@ class ChatRequest(
 ):
     sessionId: str
     message: str
+    shopDomain: str | None = None
+    clarificationAction: (
+        str | None
+    ) = None
+    clarificationFilters: (
+        dict[str, Any] | None
+    ) = None
+    bypassBroadCategoryClarification: (
+        bool
+    ) = False
 
 
 def localized_message(
@@ -95,10 +132,199 @@ def public_products(
             key: value
             for key, value
             in product.items()
-            if key != "embedding"
+            if key
+            not in {
+                "embedding",
+                "image_embedding",
+                "text_embedding",
+                "search_document",
+            }
         }
         for product in products
     ]
+
+
+
+def _remember_products(
+    *,
+    session_id: str,
+    products: list[dict],
+    query: str,
+    intent: str,
+    filters: dict | None,
+) -> None:
+    if not products:
+        return
+
+    state = (
+        get_conversation_state(
+            session_id
+        )
+        or {}
+    )
+
+    updated_state = (
+        remember_product_results(
+            state,
+            public_products(
+                products
+            ),
+            query=query,
+            intent=intent,
+            filters=filters,
+        )
+    )
+
+    save_conversation_state(
+        session_id,
+        updated_state,
+        filters=(
+            filters
+            if isinstance(
+                filters,
+                dict,
+            )
+            else {}
+        ),
+        last_query=query,
+    )
+
+
+def _reference_clarification(
+    *,
+    response_language: str,
+    last_products: list[dict],
+    unresolved: list[str] | None = None,
+) -> dict:
+    missing_text = ", ".join(
+        unresolved or []
+    )
+
+    return {
+        "intent": "clarification",
+        "clarificationType": (
+            "product_reference_required"
+        ),
+        "responseLanguage": (
+            response_language
+        ),
+        "message": localized_message(
+            response_language,
+            (
+                "I could not identify the referenced product"
+                + (
+                    f" ({missing_text})"
+                    if missing_text
+                    else ""
+                )
+                + ". Please select one of the last displayed products."
+            ),
+            (
+                "Main referenced product identify nahi kar saka"
+                + (
+                    f" ({missing_text})"
+                    if missing_text
+                    else ""
+                )
+                + ". Pichlay results mein se product select karein."
+            ),
+        ),
+        "options": (
+            reference_option_payloads(
+                last_products,
+                response_language,
+            )
+        ),
+        "recommendedProducts": [],
+    }
+
+
+def _product_detail_message(
+    product: dict,
+    response_language: str,
+) -> str:
+    title = (
+        product.get("title")
+        or "Product"
+    )
+    price = product.get(
+        "price"
+    )
+    currency = (
+        product.get(
+            "currency_code"
+        )
+        or ""
+    )
+
+    if price is None:
+        price_text = (
+            "price available nahi hai"
+            if response_language
+            == "roman_urdu"
+            else "the price is unavailable"
+        )
+    else:
+        price_text = (
+            f"{currency} {price}"
+            .strip()
+        )
+
+    availability = (
+        product.get(
+            "available_for_sale"
+        )
+    )
+
+    if availability is True:
+        availability_text = (
+            "available hai"
+            if response_language
+            == "roman_urdu"
+            else "is available"
+        )
+    elif availability is False:
+        availability_text = (
+            "currently available nahi hai"
+            if response_language
+            == "roman_urdu"
+            else "is currently unavailable"
+        )
+    else:
+        availability_text = (
+            "availability confirm nahi hai"
+            if response_language
+            == "roman_urdu"
+            else "has unknown availability"
+        )
+
+    return localized_message(
+        response_language,
+        (
+            f"{title} costs {price_text} and "
+            f"{availability_text}."
+        ),
+        (
+            f"{title} ki price {price_text} hai aur "
+            f"yeh {availability_text}."
+        ),
+    )
+
+
+def _query_requests_cheaper_similar(
+    query: str,
+) -> bool:
+    return bool(
+        re.search(
+            r"\\b(?:"
+            r"cheaper|lower price|"
+            r"sasta|sasti|saste|"
+            r"kam price"
+            r")\\b",
+            query or "",
+            flags=re.IGNORECASE,
+        )
+    )
 
 
 def _deduplicate_types(
@@ -130,6 +356,82 @@ def _deduplicate_types(
         )
 
     return unique
+
+
+def _clean_shop_domain(
+    value: Any,
+) -> str | None:
+    clean_value = " ".join(
+        str(value or "")
+        .strip()
+        .split()
+    )
+
+    if not clean_value:
+        return None
+
+    return clean_value[:255]
+
+
+def _safe_clarification_filters(
+    payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """
+    Accept only the catalog refinement fields generated by the
+    backend's clarification options.
+    """
+    if not isinstance(
+        payload,
+        dict,
+    ):
+        return {}
+
+    allowed_keys = {
+        "productType",
+        "taxonomyCategory",
+        "collection",
+        "handle",
+        "vendor",
+        "minPrice",
+        "maxPrice",
+    }
+
+    safe: dict[str, Any] = {}
+
+    for key in allowed_keys:
+        value = payload.get(key)
+
+        if value is None:
+            continue
+
+        if key in {
+            "minPrice",
+            "maxPrice",
+        }:
+            try:
+                safe[key] = float(
+                    value
+                )
+            except (
+                TypeError,
+                ValueError,
+            ):
+                continue
+
+            continue
+
+        clean_value = " ".join(
+            str(value)
+            .strip()
+            .split()
+        )
+
+        if clean_value:
+            safe[key] = (
+                clean_value[:300]
+            )
+
+    return safe
 
 
 def add_price_explanations(
@@ -249,6 +551,7 @@ def add_price_explanations(
 
 def _build_multi_category_response(
     requested_types: list[str],
+    unresolved_types: list[str],
     base_filters: dict,
     limit: int,
     response_language: str,
@@ -303,7 +606,9 @@ def _build_multi_category_response(
 
     missing_types: list[
         str
-    ] = []
+    ] = list(
+        unresolved_types
+    )
 
     sort = search_filters.get(
         "sort"
@@ -347,6 +652,9 @@ def _build_multi_category_response(
                     products,
                     top_k=(
                         per_category_limit
+                    ),
+                    query_text=(
+                        product_type
                     ),
                 )
             )
@@ -548,8 +856,64 @@ def shopping_chat(
         request.message.strip()
     )
 
+    shop_domain = (
+        _clean_shop_domain(
+            request.shopDomain
+        )
+    )
+
+    session_filters = (
+        get_session(
+            request.sessionId
+        )
+        or {}
+    )
+
+    conversation_state = (
+        get_conversation_state(
+            request.sessionId
+        )
+        or {}
+    )
+
+    last_products = (
+        conversation_state.get(
+            "last_products"
+        )
+        if isinstance(
+            conversation_state.get(
+                "last_products"
+            ),
+            list,
+        )
+        else []
+    )
+
+    selected_product = (
+        conversation_state.get(
+            "selected_product"
+        )
+        if isinstance(
+            conversation_state.get(
+                "selected_product"
+            ),
+            dict,
+        )
+        else None
+    )
+
     vocabulary = (
-        get_catalog_vocabulary()
+        get_catalog_vocabulary(
+            shop_domain=(
+                shop_domain
+            )
+        )
+    )
+
+    structured_filters = (
+        _safe_clarification_filters(
+            request.clarificationFilters
+        )
     )
 
     (
@@ -565,6 +929,7 @@ def shopping_chat(
         original_query=(
             original_query
         ),
+        vocabulary=vocabulary,
     )
 
     response_language = (
@@ -575,6 +940,37 @@ def shopping_chat(
             ),
         )
     )
+
+    deterministic_language = (
+        detect_response_language(
+            original_query
+        )
+    )
+
+    reference_selection_request = (
+        detect_product_selection_request(
+            original_query
+        )
+    )
+    reference_detail_request = (
+        detect_product_detail_request(
+            original_query
+        )
+    )
+    reference_similar_request = (
+        detect_similar_product_request(
+            original_query
+        )
+    )
+
+    if (
+        reference_selection_request
+        or reference_detail_request
+        or reference_similar_request
+    ):
+        response_language = (
+            deterministic_language
+        )
 
     intent = result.get(
         "intent",
@@ -600,9 +996,10 @@ def shopping_chat(
 
     (
         parser_types,
+        unresolved_parser_types,
         parser_type_corrections,
     ) = (
-        normalize_requested_product_types(
+        resolve_requested_product_types(
             result.get(
                 "productTypes",
                 [],
@@ -611,6 +1008,31 @@ def shopping_chat(
         )
     )
 
+    unresolved_types = (
+        _deduplicate_types(
+            unresolved_parser_types
+            + result.get(
+                "unresolvedProductTypes",
+                [],
+            )
+        )
+    )
+
+    blocked_parser_types: list[str] = []
+
+    if should_block_parser_only_catalog_types(
+        explicit_mentions=mentioned_types,
+        parser_types=parser_types,
+        unresolved_types=unresolved_types,
+    ):
+        # The customer explicitly requested an unavailable product
+        # term. Do not let a broad category inferred only by the LLM
+        # unlock unrelated catalog products.
+        blocked_parser_types = list(
+            parser_types
+        )
+        parser_types = []
+
     requested_types = (
         _deduplicate_types(
             mentioned_types
@@ -618,10 +1040,63 @@ def shopping_chat(
         )
     )
 
+    structured_type_corrections: list[
+        dict[str, str]
+    ] = []
+
+    structured_product_type = (
+        structured_filters.get(
+            "productType"
+        )
+    )
+
+    if structured_product_type:
+        (
+            resolved_structured_types,
+            _,
+            structured_type_corrections,
+        ) = resolve_requested_product_types(
+            [structured_product_type],
+            vocabulary,
+        )
+
+        if resolved_structured_types:
+            structured_filters[
+                "productType"
+            ] = (
+                resolved_structured_types[0]
+            )
+
+            requested_types = (
+                _deduplicate_types(
+                    resolved_structured_types
+                    + requested_types
+                )
+            )
+        else:
+            structured_filters.pop(
+                "productType",
+                None,
+            )
+
+    if request.clarificationAction in {
+        "apply_catalog_facet",
+        "show_all_product_type",
+    }:
+        # The option came from a previously validated backend
+        # clarification response. Facet words must not be reclassified
+        # as unknown product types by the LLM.
+        unresolved_types = []
+
     type_request_mode = (
         classify_product_type_request(
             normalized_query,
             requested_types,
+            parser_relation=(
+                result.get(
+                    "relation"
+                )
+            ),
         )
     )
 
@@ -665,6 +1140,14 @@ def shopping_chat(
         requested_types,
     )
     print(
+        "Unresolved types:",
+        unresolved_types,
+    )
+    print(
+        "Blocked parser-only types:",
+        blocked_parser_types,
+    )
+    print(
         "Type request mode:",
         type_request_mode,
     )
@@ -676,7 +1159,14 @@ def shopping_chat(
         "===================================\n"
     )
 
-    if intent == "greeting":
+    if (
+        intent == "greeting"
+        and not (
+            reference_selection_request
+            or reference_detail_request
+            or reference_similar_request
+        )
+    ):
         return {
             "intent": "greeting",
             "responseLanguage": (
@@ -728,68 +1218,435 @@ def shopping_chat(
             "recommendedProducts": [],
         }
 
-    if intent == "compare_products":
-        targets = result.get(
-            "comparisonTargets",
-            [],
+    if reference_selection_request:
+        reference_result = (
+            resolve_product_references(
+                original_query,
+                last_products,
+                selected_product,
+            )
         )
 
-        if len(targets) < 2:
-            targets = (
-                extract_comparison_targets(
-                    normalized_query
+        resolved = (
+            reference_result[
+                "resolved"
+            ]
+        )
+
+        if len(resolved) != 1:
+            return (
+                _reference_clarification(
+                    response_language=(
+                        response_language
+                    ),
+                    last_products=(
+                        last_products
+                    ),
+                    unresolved=(
+                        reference_result[
+                            "unresolved"
+                        ]
+                    ),
                 )
             )
 
-        if len(targets) < 2:
+        selected = resolved[0]
+
+        updated_state = select_product(
+            conversation_state,
+            selected,
+        )
+
+        save_conversation_state(
+            request.sessionId,
+            updated_state,
+            filters=(
+                session_filters
+            ),
+            last_query=(
+                original_query
+            ),
+        )
+
+        return {
+            "intent": (
+                "select_product"
+            ),
+            "responseLanguage": (
+                response_language
+            ),
+            "selectedProduct": (
+                selected
+            ),
+            "message": (
+                localized_message(
+                    response_language,
+                    (
+                        f"{selected.get('title') or 'The product'} "
+                        "is now selected for follow-up questions."
+                    ),
+                    (
+                        f"{selected.get('title') or 'Product'} "
+                        "select kar liya gaya hai. Ab is ke "
+                        "baray mein follow-up pooch sakte hain."
+                    ),
+                )
+            ),
+            "recommendedProducts": [
+                selected
+            ],
+        }
+
+    if reference_detail_request:
+        reference_result = (
+            resolve_product_references(
+                original_query,
+                last_products,
+                selected_product,
+            )
+        )
+
+        resolved = (
+            reference_result[
+                "resolved"
+            ]
+        )
+
+        if len(resolved) != 1:
+            return (
+                _reference_clarification(
+                    response_language=(
+                        response_language
+                    ),
+                    last_products=(
+                        last_products
+                    ),
+                    unresolved=(
+                        reference_result[
+                            "unresolved"
+                        ]
+                    ),
+                )
+            )
+
+        selected = resolved[0]
+
+        updated_state = select_product(
+            conversation_state,
+            selected,
+        )
+
+        save_conversation_state(
+            request.sessionId,
+            updated_state,
+            filters=(
+                session_filters
+            ),
+            last_query=(
+                original_query
+            ),
+        )
+
+        return {
+            "intent": (
+                "product_detail_followup"
+            ),
+            "responseLanguage": (
+                response_language
+            ),
+            "selectedProduct": (
+                selected
+            ),
+            "message": (
+                _product_detail_message(
+                    selected,
+                    response_language,
+                )
+            ),
+            "recommendedProducts": [
+                selected
+            ],
+        }
+
+    if reference_similar_request:
+        reference_result = (
+            resolve_product_references(
+                original_query,
+                last_products,
+                selected_product,
+            )
+        )
+
+        resolved = (
+            reference_result[
+                "resolved"
+            ]
+        )
+
+        if len(resolved) != 1:
+            return (
+                _reference_clarification(
+                    response_language=(
+                        response_language
+                    ),
+                    last_products=(
+                        last_products
+                    ),
+                    unresolved=(
+                        reference_result[
+                            "unresolved"
+                        ]
+                    ),
+                )
+            )
+
+        catalog_products = (
+            get_all_shopify_products(
+                shop_domain=(
+                    shop_domain
+                )
+            )
+        )
+
+        hydrated_reference = (
+            hydrate_memory_products(
+                resolved,
+                catalog_products,
+            )
+        )[0]
+
+        recommendations = (
+            find_more_like_shopify_product(
+                reference_product=(
+                    hydrated_reference
+                ),
+                products=(
+                    catalog_products
+                ),
+                top_k=limit,
+                cheaper_only=(
+                    _query_requests_cheaper_similar(
+                        original_query
+                    )
+                ),
+            )
+        )
+
+        if not recommendations:
             return {
                 "intent": (
                     "clarification"
                 ),
                 "clarificationType": (
-                    "comparison_targets_required"
+                    "similar_products_not_found"
                 ),
                 "responseLanguage": (
                     response_language
+                ),
+                "referenceProduct": (
+                    resolved[0]
                 ),
                 "message": (
                     localized_message(
                         response_language,
                         (
-                            "Please tell me the "
-                            "names of at least two "
-                            "products to compare."
+                            "I could not find another sufficiently "
+                            "similar catalog product."
                         ),
                         (
-                            "Compare karne ke liye "
-                            "kam az kam do products "
-                            "ke naam batayein."
+                            "Is product jaisa koi aur suitable "
+                            "catalog product nahi mila."
                         ),
                     )
                 ),
-                "options": [],
                 "recommendedProducts": [],
             }
 
-        catalog_products = (
-            get_all_shopify_products()
+        explanation_query = (
+            original_query
         )
 
-        match_result = (
-            match_comparison_products(
-                targets=targets,
-                products=(
-                    catalog_products
+        explanations = (
+            generate_explanations(
+                explanation_query,
+                recommendations,
+                response_language=(
+                    response_language
                 ),
             )
         )
 
-        matched = match_result[
-            "matched"
-        ]
-        unmatched = match_result[
-            "unmatched"
-        ]
+        for product, explanation in zip(
+            recommendations,
+            explanations,
+        ):
+            product[
+                "explanation"
+            ] = explanation
+
+        memory_filters = dict(
+            session_filters
+        )
+
+        if shop_domain:
+            memory_filters[
+                "shopDomain"
+            ] = shop_domain
+
+        _remember_products(
+            session_id=(
+                request.sessionId
+            ),
+            products=(
+                recommendations
+            ),
+            query=(
+                original_query
+            ),
+            intent=(
+                "similar_products"
+            ),
+            filters=(
+                memory_filters
+            ),
+        )
+
+        return {
+            "intent": (
+                "similar_products"
+            ),
+            "responseLanguage": (
+                response_language
+            ),
+            "referenceProduct": (
+                resolved[0]
+            ),
+            "rankingMode": (
+                "conversation_more_like_this"
+            ),
+            "message": (
+                localized_message(
+                    response_language,
+                    (
+                        "Here are products similar to "
+                        f"{resolved[0].get('title') or 'the selected product'}."
+                    ),
+                    (
+                        "Yeh products "
+                        f"{resolved[0].get('title') or 'selected product'} "
+                        "jaisay hain."
+                    ),
+                )
+            ),
+            "recommendedProducts": (
+                public_products(
+                    recommendations
+                )
+            ),
+        }
+
+    if intent == "compare_products":
+        reference_result = (
+            resolve_product_references(
+                original_query,
+                last_products,
+                selected_product,
+            )
+        )
+
+        catalog_products = (
+            get_all_shopify_products(
+                shop_domain=(
+                    shop_domain
+                )
+            )
+        )
+
+        memory_matched = (
+            hydrate_memory_products(
+                reference_result[
+                    "resolved"
+                ],
+                catalog_products,
+            )
+        )
+
+        targets = result.get(
+            "comparisonTargets",
+            [],
+        )
+
+        if (
+            len(memory_matched)
+            >= 2
+        ):
+            matched = (
+                memory_matched[:4]
+            )
+            unmatched = []
+            targets = [
+                (
+                    product.get(
+                        "title"
+                    )
+                    or (
+                        "Product "
+                        f"{index + 1}"
+                    )
+                )
+                for index, product
+                in enumerate(
+                    matched
+                )
+            ]
+        else:
+            if len(targets) < 2:
+                targets = (
+                    extract_comparison_targets(
+                        normalized_query
+                    )
+                )
+
+            if len(targets) < 2:
+                response = (
+                    _reference_clarification(
+                        response_language=(
+                            response_language
+                        ),
+                        last_products=(
+                            last_products
+                        ),
+                        unresolved=(
+                            reference_result[
+                                "unresolved"
+                            ]
+                        ),
+                    )
+                )
+
+                response[
+                    "clarificationType"
+                ] = (
+                    "comparison_targets_required"
+                )
+
+                return response
+
+            match_result = (
+                match_comparison_products(
+                    targets=targets,
+                    products=(
+                        catalog_products
+                    ),
+                )
+            )
+
+            matched = match_result[
+                "matched"
+            ]
+            unmatched = match_result[
+                "unmatched"
+            ]
 
         if len(matched) < 2:
             return {
@@ -858,6 +1715,24 @@ def shopping_chat(
             "aiSummary"
         ] = comparison_summary
 
+        _remember_products(
+            session_id=(
+                request.sessionId
+            ),
+            products=(
+                matched
+            ),
+            query=(
+                original_query
+            ),
+            intent=(
+                "compare_products"
+            ),
+            filters=(
+                session_filters
+            ),
+        )
+
         return {
             "intent": (
                 "compare_products"
@@ -884,7 +1759,10 @@ def shopping_chat(
     if (
         len(requested_types) > 1
         and type_request_mode
-        == "ambiguous"
+        in {
+            "ambiguous",
+            "complementary",
+        }
     ):
         response = (
             build_multiple_type_clarification(
@@ -911,8 +1789,39 @@ def shopping_chat(
         return response
 
     if (
+        unresolved_types
+        and not requested_types
+    ):
+        response = (
+            build_unknown_type_clarification(
+                unresolved_types=(
+                    unresolved_types
+                ),
+                suggestions=(
+                    suggest_catalog_types(
+                        unresolved_types,
+                        vocabulary,
+                    )
+                ),
+                response_language=(
+                    response_language
+                ),
+            )
+        )
+
+        response[
+            "responseLanguage"
+        ] = response_language
+        response[
+            "queryCorrections"
+        ] = query_corrections
+
+        return response
+
+    if (
         intent == "out_of_context"
         and not requested_types
+        and not unresolved_types
     ):
         return {
             "intent": (
@@ -956,10 +1865,75 @@ def shopping_chat(
         vocabulary,
     )
 
+    current_filters.update(
+        structured_filters
+    )
+
+    if shop_domain:
+        current_filters[
+            "shopDomain"
+        ] = shop_domain
+
+    if request.clarificationAction in {
+        "apply_catalog_facet",
+        "show_all_product_type",
+    }:
+        action = "new_search"
+
+    filter_type = (
+        current_filters.get(
+            "productType"
+        )
+    )
+
+    if filter_type:
+        (
+            resolved_filter_types,
+            unresolved_filter_types,
+            filter_type_corrections,
+        ) = (
+            resolve_requested_product_types(
+                [filter_type],
+                vocabulary,
+            )
+        )
+
+        filter_corrections.extend(
+            filter_type_corrections
+        )
+
+        if resolved_filter_types:
+            current_filters[
+                "productType"
+            ] = resolved_filter_types[0]
+
+        elif unresolved_filter_types:
+            response = (
+                build_unknown_type_clarification(
+                    unresolved_types=(
+                        unresolved_filter_types
+                    ),
+                    suggestions=(
+                        suggest_catalog_types(
+                            unresolved_filter_types,
+                            vocabulary,
+                        )
+                    ),
+                    response_language=(
+                        response_language
+                    ),
+                )
+            )
+            response[
+                "responseLanguage"
+            ] = response_language
+            return response
+
     all_corrections = (
         query_corrections
         + parser_type_corrections
         + filter_corrections
+        + structured_type_corrections
     )
 
     # Strict single-category guard:
@@ -976,10 +1950,7 @@ def shopping_chat(
         ] = requested_types[0]
 
     previous_filters = (
-        get_session(
-            request.sessionId
-        )
-        or {}
+        session_filters
     )
 
     if action == "modify":
@@ -1016,6 +1987,261 @@ def shopping_chat(
             "productTypes"
         ] = requested_types
 
+    if shop_domain:
+        merged_filters[
+            "shopDomain"
+        ] = shop_domain
+
+    if (
+        intent
+        in {
+            "product_search",
+            "recommend_products",
+        }
+        and merged_filters.get(
+            "productType"
+        )
+        and not merged_filters.get(
+            "productTypes"
+        )
+    ):
+        broad_product_type = (
+            merged_filters[
+                "productType"
+            ]
+        )
+
+        category_profile = (
+            get_product_type_profile(
+                product_type=(
+                    broad_product_type
+                ),
+                shop_domain=(
+                    shop_domain
+                ),
+            )
+        )
+
+        dynamic_facets = (
+            prepare_catalog_facets(
+                category_profile
+            )
+        )
+
+        selected_facet = None
+
+        if (
+            not merged_filters.get(
+                "taxonomyCategory"
+            )
+            and not merged_filters.get(
+                "collection"
+            )
+            and request.clarificationAction
+            not in {
+                "apply_catalog_facet",
+                "show_all_product_type",
+            }
+        ):
+            selected_facet = (
+                match_query_to_catalog_facet(
+                    query=(
+                        original_query
+                    ),
+                    product_type=(
+                        broad_product_type
+                    ),
+                    facets=(
+                        dynamic_facets
+                    ),
+                )
+            )
+
+        if selected_facet:
+            if (
+                selected_facet.get(
+                    "type"
+                )
+                == "taxonomy"
+            ):
+                merged_filters[
+                    "taxonomyCategory"
+                ] = selected_facet.get(
+                    "value"
+                )
+
+            elif (
+                selected_facet.get(
+                    "type"
+                )
+                == "collection"
+            ):
+                merged_filters[
+                    "collection"
+                ] = selected_facet.get(
+                    "value"
+                )
+
+            elif (
+                selected_facet.get(
+                    "type"
+                )
+                == "product"
+            ):
+                merged_filters[
+                    "handle"
+                ] = selected_facet.get(
+                    "value"
+                )
+
+        should_ask_category = (
+            should_clarify_broad_category(
+                product_type=(
+                    broad_product_type
+                ),
+                profile=(
+                    category_profile
+                ),
+                active_filters=(
+                    merged_filters
+                ),
+                original_query=(
+                    original_query
+                ),
+                bypass=(
+                    request
+                    .bypassBroadCategoryClarification
+                    or request
+                    .clarificationAction
+                    == "show_all_product_type"
+                ),
+            )
+        )
+
+        print(
+            "Broad category profile:",
+            {
+                "productType": (
+                    broad_product_type
+                ),
+                "productCount": (
+                    category_profile.get(
+                        "productCount",
+                        0,
+                    )
+                ),
+                "titleMatchRatio": (
+                    category_profile.get(
+                        "titleMatchRatio",
+                        0.0,
+                    )
+                ),
+                "taxonomyFacets": (
+                    category_profile.get(
+                        "taxonomyFacetCount",
+                        0,
+                    )
+                ),
+                "collectionFacets": (
+                    category_profile.get(
+                        "collectionFacetCount",
+                        0,
+                    )
+                ),
+                "productFacets": (
+                    category_profile.get(
+                        "productFacetCount",
+                        0,
+                    )
+                ),
+                "fallbackMode": (
+                    category_profile.get(
+                        "fallbackFacetMode"
+                    )
+                ),
+                "shouldClarify": (
+                    should_ask_category
+                ),
+            },
+        )
+
+        if should_ask_category:
+            save_session(
+                request.sessionId,
+                merged_filters,
+                original_query,
+            )
+
+            response = (
+                build_broad_category_clarification(
+                    product_type=(
+                        broad_product_type
+                    ),
+                    facets=(
+                        dynamic_facets
+                    ),
+                    response_language=(
+                        response_language
+                    ),
+                    product_count=int(
+                        category_profile.get(
+                            "productCount"
+                        )
+                        or 0
+                    ),
+                )
+            )
+
+            response[
+                "filters"
+            ] = merged_filters
+
+            response[
+                "queryCorrections"
+            ] = all_corrections
+
+            response[
+                "catalogProfile"
+            ] = {
+                "productCount": (
+                    category_profile.get(
+                        "productCount",
+                        0,
+                    )
+                ),
+                "titleMatchRatio": (
+                    category_profile.get(
+                        "titleMatchRatio",
+                        0.0,
+                    )
+                ),
+                "taxonomyFacetCount": (
+                    category_profile.get(
+                        "taxonomyFacetCount",
+                        0,
+                    )
+                ),
+                "collectionFacetCount": (
+                    category_profile.get(
+                        "collectionFacetCount",
+                        0,
+                    )
+                ),
+                "productFacetCount": (
+                    category_profile.get(
+                        "productFacetCount",
+                        0,
+                    )
+                ),
+                "fallbackFacetMode": (
+                    category_profile.get(
+                        "fallbackFacetMode"
+                    )
+                ),
+            }
+
+            return response
+
     save_session(
         request.sessionId,
         merged_filters,
@@ -1026,10 +2252,13 @@ def shopping_chat(
         intent
         == "multi_product_search"
     ):
-        return (
+        response = (
             _build_multi_category_response(
                 requested_types=(
                     requested_types
+                ),
+                unresolved_types=(
+                    unresolved_types
                 ),
                 base_filters=(
                     merged_filters
@@ -1044,7 +2273,62 @@ def shopping_chat(
             )
         )
 
+        _remember_products(
+            session_id=(
+                request.sessionId
+            ),
+            products=(
+                response.get(
+                    "recommendedProducts",
+                    [],
+                )
+            ),
+            query=(
+                original_query
+            ),
+            intent=(
+                "multi_product_search"
+            ),
+            filters=(
+                merged_filters
+            ),
+        )
+
+        return response
+
     if intent == "newest_products":
+        newest_filters = dict(
+            merged_filters
+        )
+        newest_filters[
+            "sort"
+        ] = "newest"
+
+        products = (
+            get_filtered_products(
+                newest_filters,
+                limit=limit,
+            )
+        )
+
+        _remember_products(
+            session_id=(
+                request.sessionId
+            ),
+            products=(
+                products
+            ),
+            query=(
+                original_query
+            ),
+            intent=(
+                "newest_products"
+            ),
+            filters=(
+                newest_filters
+            ),
+        )
+
         return {
             "intent": (
                 "newest_products"
@@ -1052,27 +2336,36 @@ def shopping_chat(
             "responseLanguage": (
                 response_language
             ),
+            "filters": (
+                newest_filters
+            ),
             "queryCorrections": (
                 all_corrections
+            ),
+            "rankingMode": (
+                "shopify_created_at"
             ),
             "message": (
                 localized_message(
                     response_language,
                     (
-                        "Newest-products intent "
-                        "was detected, but Shopify "
-                        "createdAt is not stored yet."
+                        "Here are the newest "
+                        "matching products."
                     ),
                     (
-                        "Newest-products intent "
-                        "detect ho gaya hai, lekin "
-                        "Shopify createdAt abhi "
-                        "database mein store nahi "
-                        "ho raha."
+                        "Yeh sab se naye "
+                        "matching products hain."
                     ),
                 )
             ),
-            "recommendedProducts": [],
+            "totalFilteredProducts": (
+                len(products)
+            ),
+            "recommendedProducts": (
+                public_products(
+                    products
+                )
+            ),
         }
 
     if intent == "top_products":
@@ -1081,6 +2374,24 @@ def shopping_chat(
                 merged_filters,
                 limit=limit,
             )
+        )
+
+        _remember_products(
+            session_id=(
+                request.sessionId
+            ),
+            products=(
+                products
+            ),
+            query=(
+                original_query
+            ),
+            intent=(
+                "top_products"
+            ),
+            filters=(
+                merged_filters
+            ),
         )
 
         return {
@@ -1185,6 +2496,24 @@ def shopping_chat(
             )
         )
 
+        _remember_products(
+            session_id=(
+                request.sessionId
+            ),
+            products=(
+                recommendations
+            ),
+            query=(
+                original_query
+            ),
+            intent=(
+                intent
+            ),
+            filters=(
+                merged_filters
+            ),
+        )
+
         return {
             "intent": intent,
             "responseLanguage": (
@@ -1247,6 +2576,9 @@ def shopping_chat(
             embedding,
             products,
             top_k=limit,
+            query_text=(
+                semantic_query
+            ),
         )
     )
 
@@ -1304,6 +2636,24 @@ def shopping_chat(
             "explanation"
         ] = explanation
 
+    _remember_products(
+        session_id=(
+            request.sessionId
+        ),
+        products=(
+            recommendations
+        ),
+        query=(
+            original_query
+        ),
+        intent=(
+            intent
+        ),
+        filters=(
+            merged_filters
+        ),
+    )
+
     return {
         "intent": intent,
         "responseLanguage": (
@@ -1321,6 +2671,11 @@ def shopping_chat(
         ),
         "semanticQuery": (
             semantic_query
+        ),
+        "parserStatus": (
+            result.get(
+                "parserStatus"
+            )
         ),
         "message": (
             localized_message(

@@ -1,3 +1,4 @@
+# clarification_service.py
 import os
 from typing import Any, Callable
 
@@ -18,7 +19,13 @@ def public_product(
     return {
         key: value
         for key, value in product.items()
-        if key != "embedding"
+        if key
+        not in {
+            "embedding",
+            "image_embedding",
+            "text_embedding",
+            "search_document",
+        }
     }
 
 
@@ -953,3 +960,226 @@ def build_low_confidence_clarification(
     )
 
     return response
+
+
+def build_unknown_type_clarification(
+    unresolved_types: list[str],
+    suggestions: list[dict[str, Any]],
+    response_language: str,
+) -> dict[str, Any]:
+    """Return catalog-grounded suggestions without inventing a category."""
+    clean_unresolved = [
+        " ".join(str(value or "").strip().split())
+        for value in unresolved_types
+        if str(value or "").strip()
+    ]
+    readable = ", ".join(clean_unresolved)
+    options: list[dict[str, Any]] = []
+
+    for suggestion_group in suggestions:
+        original = suggestion_group.get("input")
+        for candidate in suggestion_group.get("suggestions", []):
+            options.append({
+                "type": "catalog_type_suggestion",
+                "label": localized(
+                    response_language,
+                    f"Search {candidate}",
+                    f"{candidate} search karo",
+                ),
+                "message": localized(
+                    response_language,
+                    f"Show me {candidate}",
+                    f"Mujhy {candidate} dikhao",
+                ),
+                "originalValue": original,
+                "productType": candidate,
+            })
+            if len(options) >= 6:
+                break
+        if len(options) >= 6:
+            break
+
+    return {
+        "intent": "clarification",
+        "clarificationType": "unknown_product_type",
+        "message": localized(
+            response_language,
+            (
+                f"I could not match {readable} to a product type in this "
+                "store's current catalog."
+            ),
+            (
+                f"Main {readable} ko is store ke current catalog ke kisi "
+                "product type se match nahi kar saka."
+            ),
+        ),
+        "unresolvedProductTypes": clean_unresolved,
+        "options": options,
+        "recommendedProducts": [],
+    }
+def build_broad_category_clarification(
+    product_type: str,
+    facets: list[dict[str, Any]],
+    response_language: str,
+    product_count: int = 0,
+) -> dict[str, Any]:
+    """
+    Build clickable taxonomy/collection options from the live catalog.
+    The option names are supplied by the database, not hardcoded here.
+    """
+    clean_type = " ".join(
+        str(product_type or "")
+        .strip()
+        .split()
+    )
+
+    options: list[
+        dict[str, Any]
+    ] = []
+
+    for facet in facets[:6]:
+        facet_type = facet.get(
+            "type"
+        )
+        label = " ".join(
+            str(
+                facet.get("label")
+                or facet.get("value")
+                or ""
+            )
+            .strip()
+            .split()
+        )
+        value = " ".join(
+            str(
+                facet.get("value")
+                or label
+            )
+            .strip()
+            .split()
+        )
+
+        if (
+            not label
+            or facet_type
+            not in {
+                "taxonomy",
+                "collection",
+                "product",
+            }
+        ):
+            continue
+
+        if facet_type == "taxonomy":
+            filter_key = (
+                "taxonomyCategory"
+            )
+        elif facet_type == "collection":
+            filter_key = "collection"
+        else:
+            filter_key = "handle"
+
+        option_message = localized(
+            response_language,
+            (
+                f"Show me {label}"
+                if facet_type
+                == "product"
+                else (
+                    f"Show me {clean_type} "
+                    f"in {label}"
+                )
+            ),
+            (
+                f"Mujhy {label} dikhao"
+                if facet_type
+                == "product"
+                else (
+                    f"Mujhy {label} mein "
+                    f"{clean_type} dikhao"
+                )
+            ),
+        )
+
+        options.append({
+            "type": (
+                "catalog_facet"
+            ),
+            "action": (
+                "apply_catalog_facet"
+            ),
+            "facetType": (
+                facet_type
+            ),
+            "label": label,
+            "message": (
+                option_message
+            ),
+            "count": int(
+                facet.get("count")
+                or 0
+            ),
+            "filters": {
+                "productType": (
+                    clean_type
+                ),
+                filter_key: value,
+            },
+        })
+
+    options.append({
+        "type": (
+            "show_all_product_type"
+        ),
+        "action": (
+            "show_all_product_type"
+        ),
+        "label": localized(
+            response_language,
+            f"Show all {clean_type}",
+            f"Sab {clean_type} dikhao",
+        ),
+        "message": localized(
+            response_language,
+            f"Show me all {clean_type}",
+            f"Mujhy sab {clean_type} dikhao",
+        ),
+        "count": int(
+            product_count
+            or 0
+        ),
+        "filters": {
+            "productType": (
+                clean_type
+            ),
+        },
+        "bypassBroadCategoryClarification": (
+            True
+        ),
+    })
+
+    return {
+        "intent": "clarification",
+        "clarificationType": (
+            "broad_product_type"
+        ),
+        "responseLanguage": (
+            response_language
+        ),
+        "productType": clean_type,
+        "message": localized(
+            response_language,
+            (
+                f"{clean_type} is a broad catalog type. "
+                "Choose a more specific catalog group, "
+                "or browse all matching products."
+            ),
+            (
+                f"{clean_type} aik broad catalog type hai. "
+                "Zyada specific catalog group select karein "
+                "ya sab matching products dekhein."
+            ),
+        ),
+        "options": options,
+        "recommendedProducts": [],
+    }

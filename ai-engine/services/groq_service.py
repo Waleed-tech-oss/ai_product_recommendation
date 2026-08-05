@@ -4,155 +4,132 @@ from typing import Any
 
 from dotenv import load_dotenv
 from groq import Groq
+from pydantic import BaseModel, Field, ValidationError
 
 
 load_dotenv()
 
-client = Groq(
-    api_key=os.getenv("GROQ_API_KEY")
-)
+client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+MODEL_NAME = os.getenv("GROQ_EXPLANATION_MODEL", "llama-3.3-70b-versatile")
 
 
-def generate_explanations(
-    user_query,
-    products,
-    response_language="english",
-):
-    product_list = ""
+class ProductExplanation(BaseModel):
+    summary: str
+    reasons: list[str] = Field(default_factory=list, max_length=4)
 
-    for index, product in enumerate(
-        products,
-        start=1,
-    ):
-        product_list += f"""
-Product {index}
-Title: {product.get("title")}
-Vendor: {product.get("vendor")}
-Product Type: {product.get("product_type")}
-Price: {product.get("price")}
-Similarity Score: {round(product.get("score", 0) * 100)}%
-"""
+
+class ExplanationEnvelope(BaseModel):
+    explanations: list[ProductExplanation]
+
+
+class ComparisonEnvelope(BaseModel):
+    summary: str
+    keyPoints: list[str] = Field(default_factory=list, max_length=4)
+
+
+def _currency(product: dict[str, Any]) -> str:
+    code = product.get("currency_code") or ""
+    price = product.get("price")
+    return f"{code} {price}".strip() if price is not None else "Unavailable"
+
+
+def _request_json(messages, max_tokens):
+    response = client.chat.completions.create(
+        model=MODEL_NAME,
+        messages=messages,
+        temperature=0,
+        max_completion_tokens=max_tokens,
+        response_format={"type": "json_object"},
+    )
+    return json.loads(response.choices[0].message.content.strip())
+
+
+def generate_explanations(user_query, products, response_language="english"):
+    facts = [
+        {
+            "title": product.get("title"),
+            "vendor": product.get("vendor"),
+            "productType": product.get("product_type"),
+            "taxonomy": product.get("taxonomy_category_full_name"),
+            "price": product.get("price"),
+            "currencyCode": product.get("currency_code"),
+            "availableForSale": product.get("available_for_sale"),
+            "score": product.get("score"),
+            "lexicalScore": product.get("lexicalScore"),
+            "textScore": product.get("textScore"),
+            "imageScore": product.get("imageScore"),
+        }
+        for product in products
+    ]
 
     language_instruction = (
-        "Write in natural Roman Urdu using Latin letters only."
+        "Write natural Roman Urdu using Latin letters only."
         if response_language == "roman_urdu"
-        else "Write in clear English."
+        else "Write clear English."
     )
 
     prompt = f"""
-You are an AI Shopping Assistant.
-
-User query:
-"{user_query}"
-
-Products:
-{product_list}
+User query: {user_query}
+Product facts: {json.dumps(facts, default=str)}
 
 {language_instruction}
+Use only supplied facts. Never invent material, quality, popularity,
+rating, suitability, stock detail, or features.
 
-For each product return:
-- summary: one short sentence
-- reasons: exactly 4 short items
-
-Use only the provided facts.
-Never invent details.
-Return only a valid JSON list.
+Return this JSON object:
+{{
+  "explanations": [
+    {{
+      "summary": "one short factual sentence",
+      "reasons": ["reason 1", "reason 2", "reason 3", "reason 4"]
+    }}
+  ]
+}}
+Return one explanation per supplied product in the same order.
 """
 
     try:
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
+        payload = _request_json(
+            [
                 {
                     "role": "system",
-                    "content": "Return clean valid JSON only.",
+                    "content": "Return one valid JSON object matching the requested structure.",
                 },
-                {
-                    "role": "user",
-                    "content": prompt,
-                },
+                {"role": "user", "content": prompt},
             ],
-            temperature=0.2,
-            max_completion_tokens=900,
+            1000,
         )
+        validated = ExplanationEnvelope.model_validate(payload)
+        explanations = [item.model_dump() for item in validated.explanations]
+        if len(explanations) == len(products):
+            return explanations
 
-        content = (
-            response.choices[0]
-            .message.content
-            .strip()
-        )
-
-        if content.startswith("```"):
-            content = (
-                content
-                .replace("```json", "")
-                .replace("```", "")
-                .strip()
-            )
-
-        data = json.loads(content)
-
-        if isinstance(data, list):
-            return data
-
-        if isinstance(data, dict):
-            for key in (
-                "products",
-                "results",
-                "recommendations",
-            ):
-                if key in data:
-                    return data[key]
-
-    except Exception as error:
-        print("\n========== GROQ ERROR ==========")
+    except (json.JSONDecodeError, ValidationError, Exception) as error:
+        print("\n========== GROQ EXPLANATION ERROR ==========")
         print(error)
-        print("================================\n")
+        print("============================================\n")
 
-    explanations = []
-
+    fallback = []
     for product in products:
         if response_language == "roman_urdu":
-            summary = (
-                "Yeh aapki search ke liye relevant product hai."
-            )
-            default_reason = (
-                "AI similarity ki bunyaad par select kiya gaya."
-            )
+            summary = "Yeh product available catalog facts ki bunyaad par aapki search se match karta hai."
+            reasons = [
+                f"Product type: {product.get('product_type') or 'available nahi'}.",
+                f"Vendor: {product.get('vendor') or 'available nahi'}.",
+                f"Price: {_currency(product)}.",
+                "Search ranking title, catalog text aur semantic relevance se bani hai.",
+            ]
         else:
-            summary = (
-                "This is a relevant product for your search."
-            )
-            default_reason = (
-                "Selected using AI similarity."
-            )
+            summary = "This product matches your search based on the available catalog facts."
+            reasons = [
+                f"Product type: {product.get('product_type') or 'unavailable'}.",
+                f"Vendor: {product.get('vendor') or 'unavailable'}.",
+                f"Price: {_currency(product)}.",
+                "The ranking uses title, catalog text, and semantic relevance.",
+            ]
+        fallback.append({"summary": summary, "reasons": reasons[:4]})
 
-        reasons = []
-
-        if product.get("vendor"):
-            reasons.append(
-                f"Vendor: {product['vendor']}."
-            )
-
-        if product.get("product_type"):
-            reasons.append(
-                f"Product type: {product['product_type']}."
-            )
-
-        if product.get("price") is not None:
-            reasons.append(
-                f"Price: ${product['price']}."
-            )
-
-        while len(reasons) < 4:
-            reasons.append(default_reason)
-
-        explanations.append({
-            "summary": summary,
-            "reasons": reasons[:4],
-        })
-
-    return explanations
+    return fallback
 
 
 def generate_comparison_summary(
@@ -160,157 +137,74 @@ def generate_comparison_summary(
     comparison: dict[str, Any],
     response_language: str = "english",
 ) -> dict[str, Any]:
-    """
-    Generate a concise comparison using only database facts.
-    """
     products = comparison.get("products", [])
-    price_summary = comparison.get(
-        "priceSummary",
-        {},
-    )
+    price_summary = comparison.get("priceSummary", {})
 
     facts = [
         {
             "id": product.get("id"),
             "title": product.get("title"),
             "vendor": product.get("vendor"),
-            "productType": product.get(
-                "product_type"
-            ),
+            "productType": product.get("product_type"),
+            "taxonomy": product.get("taxonomy_category_full_name"),
             "price": product.get("price"),
+            "currencyCode": product.get("currency_code"),
             "sku": product.get("sku"),
+            "availableForSale": product.get("available_for_sale"),
         }
         for product in products
     ]
 
     language_instruction = (
-        "Write in natural Roman Urdu using Latin letters only."
+        "Write natural Roman Urdu using Latin letters only."
         if response_language == "roman_urdu"
-        else "Write in clear English."
+        else "Write clear English."
     )
 
     prompt = f"""
-Compare the products using only the supplied facts.
-
-User query:
-{user_query}
-
-Product facts:
-{json.dumps(facts, default=str)}
-
-Price facts:
-{json.dumps(price_summary, default=str)}
-
+Compare products using only these facts.
+User query: {user_query}
+Product facts: {json.dumps(facts, default=str)}
+Price facts: {json.dumps(price_summary, default=str)}
 {language_instruction}
 
-Do not invent ratings, quality, materials, popularity, stock,
-performance, or suitability.
-
 Return exactly:
-{{
-  "summary": "short factual comparison",
-  "keyPoints": ["point 1", "point 2", "point 3"]
-}}
+{{"summary":"short factual comparison","keyPoints":["point 1","point 2","point 3"]}}
 """
 
     try:
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "Return valid JSON and use only supplied facts."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": prompt,
-                },
+        payload = _request_json(
+            [
+                {"role": "system", "content": "Return one valid JSON object using only supplied facts."},
+                {"role": "user", "content": prompt},
             ],
-            temperature=0,
-            max_completion_tokens=450,
+            500,
         )
-
-        content = (
-            response.choices[0]
-            .message.content
-            .strip()
-        )
-
-        if content.startswith("```"):
-            content = (
-                content
-                .replace("```json", "")
-                .replace("```", "")
-                .strip()
-            )
-
-        data = json.loads(content)
-
-        if (
-            isinstance(data, dict)
-            and isinstance(data.get("summary"), str)
-            and isinstance(data.get("keyPoints"), list)
-        ):
-            return {
-                "summary": data["summary"],
-                "keyPoints": [
-                    str(point)
-                    for point in data["keyPoints"][:4]
-                ],
-            }
+        return ComparisonEnvelope.model_validate(payload).model_dump()
 
     except Exception as error:
-        print(
-            "\n========== COMPARISON GROQ ERROR =========="
-        )
+        print("\n========== COMPARISON GROQ ERROR ==========")
         print(error)
-        print(
-            "===========================================\n"
-        )
+        print("===========================================\n")
 
-    cheapest = price_summary.get(
-        "cheapestProductTitle"
-    )
-    difference = price_summary.get(
-        "priceDifference"
-    )
+    cheapest = price_summary.get("cheapestProductTitle")
+    difference = price_summary.get("priceDifference")
 
     if response_language == "roman_urdu":
-        summary = (
-            "Comparison available database facts par based hai."
-        )
-        key_points = [
-            f"Kam price wala product: {cheapest}."
-            if cheapest
-            else "Price comparison available nahi hai.",
-            f"Price difference: ${difference}."
-            if difference is not None
-            else "Price difference calculate nahi ho saka.",
-            (
-                "Ratings, reviews aur stock data database mein "
-                "available nahi hain."
-            ),
-        ]
-    else:
-        summary = (
-            "The comparison is based on available database facts."
-        )
-        key_points = [
-            f"Lower-priced product: {cheapest}."
-            if cheapest
-            else "A price comparison is not available.",
-            f"Price difference: ${difference}."
-            if difference is not None
-            else "The price difference could not be calculated.",
-            (
-                "Ratings, reviews, and inventory data are not "
-                "available in the current database."
-            ),
-        ]
+        return {
+            "summary": "Comparison available database facts par based hai.",
+            "keyPoints": [
+                f"Kam price wala product: {cheapest}." if cheapest else "Price comparison available nahi hai.",
+                f"Price difference: {difference}." if difference is not None else "Price difference calculate nahi ho saka.",
+                "Unavailable product facts invent nahi kiye gaye.",
+            ],
+        }
 
     return {
-        "summary": summary,
-        "keyPoints": key_points,
+        "summary": "The comparison is based on available database facts.",
+        "keyPoints": [
+            f"Lower-priced product: {cheapest}." if cheapest else "A price comparison is not available.",
+            f"Price difference: {difference}." if difference is not None else "The price difference could not be calculated.",
+            "Unavailable product facts were not invented.",
+        ],
     }

@@ -22,6 +22,7 @@ from services.chat_service import (
 )
 from services.clarification_service import (
     build_no_result_clarification,
+    build_unknown_type_clarification,
 )
 from services.clip_service import (
     generate_image_embedding,
@@ -47,8 +48,12 @@ from services.intent_service import (
     detect_response_language,
 )
 from services.query_normalizer import (
+    detect_product_type_mentions,
     normalize_filter_values,
     normalize_query_text,
+    resolve_requested_product_types,
+    should_block_parser_only_catalog_types,
+    suggest_catalog_types,
 )
 from services.recommendation_service import (
     find_hybrid_shopify_products,
@@ -167,6 +172,7 @@ async def image_chat_search(
             original_query=(
                 original_message
             ),
+            vocabulary=vocabulary,
         )
 
         response_language = parsed.get(
@@ -191,6 +197,58 @@ async def image_chat_search(
                 )
             )
         )
+
+        explicit_types = detect_product_type_mentions(
+            normalized_query,
+            vocabulary,
+        )
+
+        (
+            parser_types,
+            unresolved_types,
+            type_corrections,
+        ) = resolve_requested_product_types(
+            parsed.get("productTypes", []),
+            vocabulary,
+        )
+
+        unresolved_types = list(dict.fromkeys(
+            unresolved_types
+            + parsed.get("unresolvedProductTypes", [])
+        ))
+
+        if should_block_parser_only_catalog_types(
+            explicit_mentions=explicit_types,
+            parser_types=parser_types,
+            unresolved_types=unresolved_types,
+        ):
+            parser_types = []
+
+        resolved_types = list(dict.fromkeys(
+            explicit_types + parser_types
+        ))
+
+        query_corrections.extend(type_corrections)
+
+        if unresolved_types and not resolved_types:
+            response = build_unknown_type_clarification(
+                unresolved_types=unresolved_types,
+                suggestions=suggest_catalog_types(
+                    unresolved_types,
+                    vocabulary,
+                ),
+                response_language=response_language,
+            )
+            response.update({
+                "responseLanguage": response_language,
+                "searchMode": "image_text_unknown_category",
+                "queryCorrections": query_corrections,
+                "imageMetadata": image_metadata,
+            })
+            return response
+
+        if len(resolved_types) == 1:
+            current_filters["productType"] = resolved_types[0]
 
         (
             current_filters,
@@ -317,6 +375,11 @@ async def image_chat_search(
                 else None
             ),
             products=products,
+            query_text=(
+                semantic_query
+                if use_text_embedding
+                else None
+            ),
             top_k=limit,
             infer_product_type=(
                 not bool(
@@ -442,12 +505,17 @@ async def image_chat_search(
         "imageMetadata": image_metadata,
         "rankingWeights": {
             "image": (
-                0.70
+                0.65
                 if use_text_embedding
                 else 1.0
             ),
             "text": (
-                0.30
+                0.25
+                if use_text_embedding
+                else 0.0
+            ),
+            "lexical": (
+                0.10
                 if use_text_embedding
                 else 0.0
             ),

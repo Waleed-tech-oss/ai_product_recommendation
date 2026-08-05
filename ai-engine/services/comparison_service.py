@@ -3,6 +3,14 @@ from difflib import SequenceMatcher
 from typing import Any
 
 
+PRIVATE_PRODUCT_FIELDS = {
+    "embedding",
+    "image_embedding",
+    "text_embedding",
+    "search_document",
+}
+
+
 def _clean(value: str) -> str:
     return " ".join(
         re.findall(
@@ -12,65 +20,97 @@ def _clean(value: str) -> str:
     )
 
 
-def _token_overlap(left: str, right: str) -> float:
-    left_tokens = set(_clean(left).split())
-    right_tokens = set(_clean(right).split())
+def _token_overlap(
+    left: str,
+    right: str,
+) -> float:
+    left_tokens = set(
+        _clean(left).split()
+    )
+    right_tokens = set(
+        _clean(right).split()
+    )
 
-    if not left_tokens or not right_tokens:
+    if (
+        not left_tokens
+        or not right_tokens
+    ):
         return 0.0
 
     return (
-        len(left_tokens.intersection(right_tokens))
-        / len(left_tokens.union(right_tokens))
+        len(
+            left_tokens.intersection(
+                right_tokens
+            )
+        )
+        / len(
+            left_tokens.union(
+                right_tokens
+            )
+        )
     )
 
 
-def _match_score(target: str, title: str) -> float:
-    clean_target = _clean(target)
-    clean_title = _clean(title)
+def _match_score(
+    target: str,
+    title: str,
+) -> float:
+    clean_target = _clean(
+        target
+    )
+    clean_title = _clean(
+        title
+    )
 
-    if not clean_target or not clean_title:
+    if (
+        not clean_target
+        or not clean_title
+    ):
         return 0.0
 
-    if clean_target == clean_title:
+    if (
+        clean_target
+        == clean_title
+    ):
         return 1.0
 
-    sequence_score = SequenceMatcher(
-        None,
-        clean_target,
-        clean_title,
-    ).ratio()
+    sequence_score = (
+        SequenceMatcher(
+            None,
+            clean_target,
+            clean_title,
+        ).ratio()
+    )
 
-    overlap_score = _token_overlap(
-        clean_target,
-        clean_title,
+    overlap_score = (
+        _token_overlap(
+            clean_target,
+            clean_title,
+        )
     )
 
     substring_bonus = (
         0.15
-        if clean_target in clean_title
+        if clean_target
+        in clean_title
         else 0.0
     )
 
     return min(
         1.0,
         (
-            sequence_score * 0.65
-            + overlap_score * 0.35
+            sequence_score
+            * 0.65
+            + overlap_score
+            * 0.35
             + substring_bonus
         ),
     )
 
 
-def extract_comparison_targets(query: str) -> list[str]:
-    """
-    Fallback when Groq does not return comparisonTargets.
-
-    Handles:
-    - Compare Alpha vs Beta
-    - Alpha and Beta compare
-    - Alpha aur Beta compare kro
-    """
+def extract_comparison_targets(
+    query: str,
+) -> list[str]:
     text = query or ""
 
     text = re.sub(
@@ -95,15 +135,28 @@ def extract_comparison_targets(query: str) -> list[str]:
     )
 
     return [
-        " ".join(part.split()).strip(" .?!")
+        " ".join(
+            part.split()
+        ).strip(
+            " .?!"
+        )
         for part in parts
-        if len(" ".join(part.split()).strip(" .?!")) >= 2
+        if len(
+            " ".join(
+                part.split()
+            ).strip(
+                " .?!"
+            )
+        )
+        >= 2
     ][:4]
 
 
 def _suggest_titles(
     target: str,
-    products: list[dict[str, Any]],
+    products: list[
+        dict[str, Any]
+    ],
     limit: int = 3,
 ) -> list[str]:
     ranked = sorted(
@@ -111,12 +164,25 @@ def _suggest_titles(
             (
                 _match_score(
                     target,
-                    str(product.get("title", "")),
+                    str(
+                        product.get(
+                            "title",
+                            "",
+                        )
+                    ),
                 ),
-                str(product.get("title", "")),
+                str(
+                    product.get(
+                        "title",
+                        "",
+                    )
+                ),
             )
-            for product in products
-            if product.get("title")
+            for product
+            in products
+            if product.get(
+                "title"
+            )
         ),
         key=lambda item: item[0],
         reverse=True,
@@ -124,17 +190,24 @@ def _suggest_titles(
 
     return [
         title
-        for score, title in ranked[:limit]
+        for score, title
+        in ranked[:limit]
         if score >= 0.25
     ]
 
 
 def match_comparison_products(
     targets: list[str],
-    products: list[dict[str, Any]],
+    products: list[
+        dict[str, Any]
+    ],
 ) -> dict[str, Any]:
-    matched: list[dict[str, Any]] = []
-    unmatched: list[dict[str, Any]] = []
+    matched: list[
+        dict[str, Any]
+    ] = []
+    unmatched: list[
+        dict[str, Any]
+    ] = []
     used_ids: set[Any] = set()
 
     for target in targets[:4]:
@@ -142,36 +215,68 @@ def match_comparison_products(
         best_score = 0.0
 
         for product in products:
-            product_id = product.get("id")
+            product_id = (
+                product.get(
+                    "shopify_id"
+                )
+                or product.get(
+                    "id"
+                )
+            )
 
             if product_id in used_ids:
                 continue
 
             score = _match_score(
                 target,
-                str(product.get("title", "")),
+                str(
+                    product.get(
+                        "title",
+                        "",
+                    )
+                ),
             )
 
             if score > best_score:
-                best_product = product
+                best_product = (
+                    product
+                )
                 best_score = score
 
-        if best_product and best_score >= 0.45:
-            used_ids.add(best_product.get("id"))
+        if (
+            best_product
+            and best_score
+            >= 0.45
+        ):
+            used_ids.add(
+                best_product.get(
+                    "shopify_id"
+                )
+                or best_product.get(
+                    "id"
+                )
+            )
+
             matched.append({
                 **best_product,
-                "comparisonMatchScore": round(
-                    best_score,
-                    4,
+                "comparisonMatchScore": (
+                    round(
+                        best_score,
+                        4,
+                    )
                 ),
-                "comparisonTarget": target,
+                "comparisonTarget": (
+                    target
+                ),
             })
         else:
             unmatched.append({
                 "target": target,
-                "suggestions": _suggest_titles(
-                    target,
-                    products,
+                "suggestions": (
+                    _suggest_titles(
+                        target,
+                        products,
+                    )
                 ),
             })
 
@@ -186,57 +291,105 @@ def public_product(
 ) -> dict[str, Any]:
     return {
         key: value
-        for key, value in product.items()
-        if key != "embedding"
+        for key, value
+        in product.items()
+        if key
+        not in PRIVATE_PRODUCT_FIELDS
     }
 
 
+def _variant_count(
+    product: dict[str, Any],
+) -> int:
+    variants = product.get(
+        "variants"
+    )
+
+    return (
+        len(variants)
+        if isinstance(
+            variants,
+            list,
+        )
+        else 0
+    )
+
+
 def build_product_comparison(
-    products: list[dict[str, Any]],
+    products: list[
+        dict[str, Any]
+    ],
 ) -> dict[str, Any]:
     public_products = [
-        public_product(product)
-        for product in products[:4]
+        public_product(
+            product
+        )
+        for product
+        in products[:4]
     ]
 
     prices = [
         (
             product.get("id"),
-            float(product["price"]),
-            product.get("title"),
+            float(
+                product["price"]
+            ),
+            product.get(
+                "title"
+            ),
         )
-        for product in public_products
-        if product.get("price") is not None
+        for product
+        in public_products
+        if product.get(
+            "price"
+        )
+        is not None
     ]
 
-    price_summary: dict[str, Any] = {
+    price_summary: dict[
+        str,
+        Any,
+    ] = {
         "cheapestProductId": None,
-        "mostExpensiveProductId": None,
+        "mostExpensiveProductId": (
+            None
+        ),
         "priceDifference": None,
     }
 
     if prices:
         cheapest = min(
             prices,
-            key=lambda item: item[1],
+            key=lambda item: (
+                item[1]
+            ),
         )
         most_expensive = max(
             prices,
-            key=lambda item: item[1],
+            key=lambda item: (
+                item[1]
+            ),
         )
 
         price_summary = {
-            "cheapestProductId": cheapest[0],
-            "cheapestProductTitle": cheapest[2],
+            "cheapestProductId": (
+                cheapest[0]
+            ),
+            "cheapestProductTitle": (
+                cheapest[2]
+            ),
             "mostExpensiveProductId": (
                 most_expensive[0]
             ),
             "mostExpensiveProductTitle": (
                 most_expensive[2]
             ),
-            "priceDifference": round(
-                most_expensive[1] - cheapest[1],
-                2,
+            "priceDifference": (
+                round(
+                    most_expensive[1]
+                    - cheapest[1],
+                    2,
+                )
             ),
         }
 
@@ -246,10 +399,39 @@ def build_product_comparison(
             "label": "Price",
             "values": [
                 {
-                    "productId": product.get("id"),
-                    "value": product.get("price"),
+                    "productId": (
+                        product.get(
+                            "id"
+                        )
+                    ),
+                    "value": (
+                        product.get(
+                            "price"
+                        )
+                    ),
                 }
-                for product in public_products
+                for product
+                in public_products
+            ],
+        },
+        {
+            "field": "currency_code",
+            "label": "Currency",
+            "values": [
+                {
+                    "productId": (
+                        product.get(
+                            "id"
+                        )
+                    ),
+                    "value": (
+                        product.get(
+                            "currency_code"
+                        )
+                    ),
+                }
+                for product
+                in public_products
             ],
         },
         {
@@ -257,10 +439,19 @@ def build_product_comparison(
             "label": "Vendor",
             "values": [
                 {
-                    "productId": product.get("id"),
-                    "value": product.get("vendor"),
+                    "productId": (
+                        product.get(
+                            "id"
+                        )
+                    ),
+                    "value": (
+                        product.get(
+                            "vendor"
+                        )
+                    ),
                 }
-                for product in public_products
+                for product
+                in public_products
             ],
         },
         {
@@ -268,12 +459,69 @@ def build_product_comparison(
             "label": "Product Type",
             "values": [
                 {
-                    "productId": product.get("id"),
-                    "value": product.get(
-                        "product_type"
+                    "productId": (
+                        product.get(
+                            "id"
+                        )
+                    ),
+                    "value": (
+                        product.get(
+                            "product_type"
+                        )
                     ),
                 }
-                for product in public_products
+                for product
+                in public_products
+            ],
+        },
+        {
+            "field": "availability",
+            "label": "Available",
+            "values": [
+                {
+                    "productId": (
+                        product.get(
+                            "id"
+                        )
+                    ),
+                    "value": (
+                        "Yes"
+                        if product.get(
+                            "available_for_sale"
+                        )
+                        is True
+                        else (
+                            "No"
+                            if product.get(
+                                "available_for_sale"
+                            )
+                            is False
+                            else "Unknown"
+                        )
+                    ),
+                }
+                for product
+                in public_products
+            ],
+        },
+        {
+            "field": "variant_count",
+            "label": "Variants",
+            "values": [
+                {
+                    "productId": (
+                        product.get(
+                            "id"
+                        )
+                    ),
+                    "value": (
+                        _variant_count(
+                            product
+                        )
+                    ),
+                }
+                for product
+                in public_products
             ],
         },
         {
@@ -281,29 +529,43 @@ def build_product_comparison(
             "label": "SKU",
             "values": [
                 {
-                    "productId": product.get("id"),
-                    "value": product.get("sku"),
+                    "productId": (
+                        product.get(
+                            "id"
+                        )
+                    ),
+                    "value": (
+                        product.get(
+                            "sku"
+                        )
+                    ),
                 }
-                for product in public_products
+                for product
+                in public_products
             ],
         },
     ]
 
     return {
-        "products": public_products,
+        "products": (
+            public_products
+        ),
         "rows": rows,
-        "priceSummary": price_summary,
+        "priceSummary": (
+            price_summary
+        ),
         "comparedFields": [
             "price",
+            "currency_code",
             "vendor",
             "product_type",
+            "availability",
+            "variant_count",
             "sku",
         ],
         "missingFields": [
             "ratings",
             "reviews",
-            "availability",
-            "inventory",
             "material",
         ],
     }
